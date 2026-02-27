@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pocket Champs - Level 2 Winter</title>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
+
+    <!-- KI Tracking Bibliotheken (MediaPipe) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #1a2f26; 
+            font-family: 'Outfit', sans-serif;
+            overflow: hidden; touch-action: none; 
+            user-select: none; -webkit-user-select: none;
+        }
+        
+        canvas { display: block; width: 100%; height: 100%; }
+
+        #uiLayer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; display: flex; flex-direction: column; justify-content: space-between;
+        }
+
+        #rankDisplay {
+            margin-top: 20px; text-align: center; font-size: 50px; color: #ffcc00;
+            text-shadow: 3px 3px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 0 5px 15px rgba(0,0,0,0.6);
+            font-weight: bold; display: none; z-index: 50;
+        }
+
+        #weaponUI {
+            display: none; position: absolute; bottom: 30px; right: 30px; pointer-events: auto;
+        }
+        #throwBtn {
+            padding: 0; width: 90px; height: 90px; border-radius: 50%;
+            background: radial-gradient(circle, #3b82f6, #063c8a);
+            border: 4px solid white; color: white; font-size: 45px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.6); cursor: pointer;
+            display: flex; justify-content: center; align-items: center;
+            transition: transform 0.1s;
+        }
+        #throwBtn:active { transform: scale(0.9); }
+        
+        @keyframes pulseWeapon {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,255,255, 0.7); }
+            70% { transform: scale(1.1); box-shadow: 0 0 0 15px rgba(255,255,255, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,255,255, 0); }
+        }
+        .armed { animation: pulseWeapon 1.5s infinite; }
+
+        .screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 30, 15, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            display: flex; flex-direction: column; justify-content: center; align-items: center; 
+            pointer-events: auto; z-index: 10;
+        }
+
+        h1 { 
+            color: #fff; font-size: 48px; text-align: center; text-shadow: 0 4px 15px rgba(0,0,0,0.5); 
+            margin-bottom: 30px; letter-spacing: 3px; font-weight: 900; 
+        }
+        
+        /* Level Menü */
+        .level-container {
+            display: flex; gap: 30px; margin-bottom: 40px; flex-wrap: wrap; justify-content: center;
+        }
+        .level-card {
+            border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 24px; width: 240px; padding: 30px; 
+            text-align: center; cursor: pointer; box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            position: relative; overflow: hidden;
+        }
+        .level-card::after {
+            content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 100%);
+            display: none;
+        }
+        .level-card:hover { 
+            transform: translateY(-8px); box-shadow: 0 20px 40px rgba(0,0,0,0.5); 
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+        .level-card:hover::after { display: block; }
+        .level-card:active { transform: scale(0.96); }
+        
+        /* Dschungel Theme Karte */
+        .card-jungle { background: linear-gradient(135deg, rgba(76, 175, 80, 0.85), rgba(46, 125, 50, 0.85)); }
+        .card-jungle .level-title { color: #fff; font-size: 32px; font-weight: 800; margin-bottom: 12px; }
+        
+        /* Schnee Theme Karte */
+        .card-snow { background: linear-gradient(135deg, rgba(107, 168, 229, 0.85), rgba(59, 130, 246, 0.85)); }
+        .card-snow .level-title { color: #ffffff; font-size: 32px; font-weight: 800; margin-bottom: 12px; }
+        
+        .level-desc { color: rgba(255,255,255,0.9); font-size: 16px; font-weight: 600; letter-spacing: 1px;}
+
+        p { color: #eee; font-size: 18px; text-align: center; max-width: 80%; margin-bottom: 40px; line-height: 1.6; }
+
+        .btn-group { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; margin-bottom: 30px;}
+        
+        .play-btn {
+            padding: 16px 45px; font-size: 20px; font-weight: 800; color: white;
+            background: linear-gradient(135deg, #2b8cff, #1059c2);
+            border: 2px solid rgba(255,255,255,0.3); border-radius: 100px; cursor: pointer;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-transform: uppercase;
+            letter-spacing: 1px; transition: all 0.3s ease;
+        }
+        .play-btn:hover {
+            transform: translateY(-3px); box-shadow: 0 15px 35px rgba(0,0,0,0.6);
+            border-color: rgba(255,255,255,0.6);
+        }
+        .play-btn:active { transform: scale(0.96); }
+        .cam-btn { background: linear-gradient(135deg, #4caf50, #2e7d32); }
+
+        #endScreen, #controlScreen, #calibrationScreen { display: none; }
+        
+        #leaderboard {
+            width: 90%; max-width: 450px; background: rgba(0,0,0,0.6);
+            border-radius: 15px; padding: 20px; margin-bottom: 30px; border: 2px solid rgba(255,255,255,0.2);
+        }
+        .lb-row {
+            display: flex; justify-content: space-between; align-items: center; padding: 10px 0; 
+            border-bottom: 1px solid rgba(255,255,255,0.1); font-family: Arial, sans-serif; font-size: 20px; font-weight: bold;
+        }
+        .lb-row:last-child { border-bottom: none; }
+        .lb-rank { width: 40px; color: #aaa; }
+        .lb-name { flex-grow: 1; color: white; }
+        .lb-time { color: #ffcc00; font-family: monospace; font-size: 22px;}
+        .is-player { background: rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 10px; margin: -10px; }
+
+        .video-container {
+            position: absolute; border: 4px solid #4caf50; border-radius: 15px; overflow: hidden;
+            background: #000; box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            transform: scaleX(-1); transition: all 0.5s ease-in-out; z-index: 20; display: none;
+        }
+        .pip-center { top: 50%; left: 50%; width: 320px; height: 240px; margin-top: -120px; margin-left: -160px; }
+        .pip-corner { top: 20px; left: 20px; width: 120px; height: 90px; border-width: 2px; border-color: #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.5); pointer-events: none; }
+
+        #videoElement { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        #calibrationCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;}
+        
+        .instruction-box { 
+            position: absolute; top: 75%; width: 80%; background: rgba(0,0,0,0.8); padding: 15px; 
+            border-radius: 10px; color: white; font-family: Arial, sans-serif; text-align: center; z-index: 21;
+        }
+        .highlight { color: #4caf50; font-weight: bold; font-size: 20px; }
+        .weapon-desc { display: inline-block; text-align: left; margin-top: 10px; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 10px;}
+
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="cameraPip" class="video-container pip-center">
+        <video id="videoElement" autoplay playsinline></video>
+        <canvas id="calibrationCanvas" width="320" height="240"></canvas>
+    </div>
+
+    <div id="uiLayer">
+        <div id="rankDisplay">1st</div>
+        <div id="weaponUI">
+            <button id="throwBtn" class="armed">🚀</button>
+        </div>
+    </div>
+
+    <!-- LEVEL AUSWAHL -->
+    <div id="startScreen" class="screen">
+        <h1>LEVEL WÄHLEN</h1>
+        <div class="level-container">
+            <div class="level-card card-jungle" onclick="selectLevel(1)">
+                <div class="level-title">LEVEL 1</div>
+                <div class="level-desc">Dschungel Rennen</div>
+            </div>
+            <div class="level-card card-snow" onclick="selectLevel(2)">
+                <div class="level-title">LEVEL 2</div>
+                <div class="level-desc">Schnee Abfahrt</div>
+            </div>
+        </div>
+        <p>Wähle eine Strecke, um fortzufahren.</p>
+    </div>
+
+    <div id="controlScreen" class="screen">
+        <h1>STEUERUNG</h1>
+        <div class="btn-group">
+            <button class="play-btn" onclick="initGame('touch')">TOUCH</button>
+            <button class="play-btn cam-btn" onclick="startCalibration()">KAMERA (KI)</button>
+        </div>
+        <div class="weapon-desc">
+            🚧 <b>Achtung:</b> Große Wände zwingen zum Springen!<br><br>
+            📦 <b>Items:</b> (Erscheinen auf den Spuren!)<br>
+            🥇 Platz 1: <b>Banane 🍌</b> (Nach hinten werfen)<br>
+            🥈 Platz 2/3: <b>Rakete 🚀</b> (Nach vorne schießen)<br>
+            🥉 Platz 4: <b>Blitz ⚡</b> (Schockt alle!)<br><br>
+            <b>Kamera:</b> Arm weit zur Seite strecken zum Abfeuern!
+        </div>
+    </div>
+
+    <div id="calibrationScreen" class="screen">
+        <h1 style="position: absolute; top: 10%;">KALIBRIERUNG</h1>
+        <div class="instruction-box" id="calibText">
+            Bitte erlaube den Kamera-Zugriff...<br>Lade KI-Modell...
+        </div>
+        <button class="play-btn" style="position: absolute; bottom: 5%; display:none;" id="forceStartBtn" onclick="forceCameraStart()">Manuell Starten</button>
+    </div>
+
+    <div id="endScreen" class="screen">
+        <h1 id="resultText" style="color:#ffcc00; margin-top:20px;">FINISH!</h1>
+        <div id="leaderboard"></div>
+        <p id="restartHint" style="display:none; color: #4caf50; font-weight: bold;">🙌 Hebe beide Hände zum Neustart! 🙌</p>
+        <button class="play-btn" onclick="location.reload()">ZURÜCK ZUM MENÜ</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        let isPlaying = false;
+        let lastTime = 0; 
+        let raceStartTime = 0; 
+        let controlMode = 'touch'; 
+        let currentLevel = 1; // 1 = Dschungel, 2 = Schnee
+        
+        let globalFlashAlpha = 0; 
+
+        // Engine Parameter
+        let cameraZ = 0; let cameraX = 0; 
+        let currentCameraY = 350; // Wird dynamisch angepasst (für Abfahrt)
+        const cameraHeight = 350; const focalLength = 320;  
+        const drawDistance = 45; const segmentLength = 120;
+        const roadWidth = 1000; 
+        const finishLineZ = 75000; 
+
+        let player = null;
+        let racers = [], items = [], projectiles = [], trees = [];
+        let targetX = 0; let touchX = 0, touchY = 0, touchStartTime = 0;
+
+        let laneIndex = 1; 
+        let poseEngine = null;
+        let cameraFeed = null;
+        let calibrationMode = false;
+
+        const calibCanvas = document.getElementById('calibrationCanvas');
+        const calibCtx = calibCanvas.getContext('2d');
+        const videoElement = document.getElementById('videoElement');
+        const cameraPip = document.getElementById('cameraPip');
+        const weaponUI = document.getElementById('weaponUI');
+        const throwBtn = document.getElementById('throwBtn');
+        const rankDisplay = document.getElementById('rankDisplay');
+
+        // --- Farbthemen für die Level ---
+        const themes = {
+            1: { // Dschungel
+                skyTop: '#3a7bd5', skyBot: '#a6d4ba', bgHill: '#2c523a',
+                roadDark: '#4d8a26', roadLight: '#60a331',
+                roadMDark: '#60a331', roadMLight: '#4d8a26', 
+                wallDark: '#6b4226', wallLight: '#825231', wallTopDark: '#7a4e2e', wallTopLight: '#945e3a',
+                outDark: '#1a3a22', outLight: '#1f4528',
+                treeTrunk: '#3d2314', treeL1: '#1e5928', treeL2: '#266e33'
+            },
+            2: { // Schnee
+                skyTop: '#6ba8e5', skyBot: '#e6f7ff', bgHill: '#99ccff',
+                roadDark: '#d9f2ff', roadLight: '#ffffff',
+                roadMDark: '#ffffff', roadMLight: '#d9f2ff',
+                wallDark: '#80ccff', wallLight: '#99d6ff', wallTopDark: '#99d6ff', wallTopLight: '#b3e0ff',
+                outDark: '#cce6ff', outLight: '#e6f7ff',
+                treeTrunk: '#4a3219', treeL1: '#f0f8ff', treeL2: '#ffffff'
+            }
+        };
+
+        function shadeColor(color, percent) {
+            let R = parseInt(color.substring(1,3),16), G = parseInt(color.substring(3,5),16), B = parseInt(color.substring(5,7),16);
+            R = parseInt(R * (100 + percent) / 100); G = parseInt(G * (100 + percent) / 100); B = parseInt(B * (100 + percent) / 100);
+            R = (R<255)?R:255;  G = (G<255)?G:255;  B = (B<255)?B:255;
+            let RR = ((Math.round(R)).toString(16).length==1)?"0"+(Math.round(R)).toString(16):(Math.round(R)).toString(16);
+            let GG = ((Math.round(G)).toString(16).length==1)?"0"+(Math.round(G)).toString(16):(Math.round(G)).toString(16);
+            let BB = ((Math.round(B)).toString(16).length==1)?"0"+(Math.round(B)).toString(16):(Math.round(B)).toString(16);
+            return "#"+RR+GG+BB;
+        }
+
+        function formatTime(totalSeconds) {
+            let m = Math.floor(totalSeconds / 60), s = Math.floor(totalSeconds % 60), ms = Math.floor((totalSeconds % 1) * 100);
+            return (m > 0 ? m + ":" : "") + (s < 10 && m > 0 ? "0" : "") + s + "." + (ms < 10 ? "0" : "") + ms + "s";
+        }
+
+        function resize() {
+            width = window.innerWidth; height = window.innerHeight;
+            canvas.width = width; canvas.height = height;
+        }
+        window.addEventListener('resize', resize); resize();
+        
+        function getCurve(z) { return Math.sin(z * 0.0004) * 600 + Math.sin(z * 0.0002) * 300; }
+        
+        // --- NEU: Höhenberechnung für Dschungel vs. Abfahrt ---
+        function getHillY(z) {
+            let hill = Math.sin(z * 0.005) * 80;
+            // Level 2 (Schnee) hat eine permanente Abfahrt!
+            let slope = (currentLevel === 2) ? (-z * 0.08) : 0; 
+            return hill + slope;
+        }
+
+        function selectLevel(lvl) {
+            currentLevel = lvl;
+            document.getElementById('startScreen').style.display = 'none';
+            document.getElementById('controlScreen').style.display = 'flex';
+        }
+
+        function showControls() {
+            document.getElementById('startScreen').style.display = 'none';
+            document.getElementById('controlScreen').style.display = 'flex';
+        }
+
+        // --- MediaPipe Body Tracking Engine ---
+        function startCalibration() {
+            document.getElementById('controlScreen').style.display = 'none';
+            document.getElementById('calibrationScreen').style.display = 'flex';
+            cameraPip.style.display = 'block'; 
+            cameraPip.className = "video-container pip-center";
+            
+            if (poseEngine) {
+                calibrationMode = true;
+                document.getElementById('calibText').innerHTML = "Stelle dich auf.<br><span class='highlight'>Hebe BEIDE HÄNDE um zu starten!</span>";
+                return;
+            }
+
+            const calibText = document.getElementById('calibText');
+            poseEngine = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+            poseEngine.setOptions({ modelComplexity: 0, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            poseEngine.onResults(onPoseResults);
+
+            cameraFeed = new Camera(videoElement, {
+                onFrame: async () => { await poseEngine.send({image: videoElement}); },
+                width: 320, height: 240
+            });
+            
+            cameraFeed.start().then(() => {
+                calibrationMode = true;
+                calibText.innerHTML = "Stelle dich auf.<br><span class='highlight'>Hebe BEIDE HÄNDE um zu starten!</span>";
+                document.getElementById('forceStartBtn').style.display = 'block';
+            }).catch(e => {
+                calibText.innerHTML = "Kamera-Zugriff blockiert!<br>Bitte erlaube die Kamera in den Browser-Einstellungen.";
+            });
+        }
+
+        function forceCameraStart() { calibrationMode = false; initGame(controlMode); }
+
+        function drawSkeleton(lm, isShootingL, isShootingR) {
+            calibCtx.clearRect(0, 0, calibCanvas.width, calibCanvas.height);
+            calibCtx.strokeStyle = '#00ff00'; calibCtx.lineWidth = 4; calibCtx.fillStyle = '#ff0000';
+
+            const connections = [[11,12], [11,13], [13,15], [12,14], [14,16], [11,23], [12,24], [23,24]];
+            connections.forEach(pair => {
+                let p1 = lm[pair[0]], p2 = lm[pair[1]];
+                if (p1 && p2 && p1.visibility > 0.5 && p2.visibility > 0.5) {
+                    calibCtx.beginPath();
+                    calibCtx.moveTo(p1.x * calibCanvas.width, p1.y * calibCanvas.height);
+                    calibCtx.lineTo(p2.x * calibCanvas.width, p2.y * calibCanvas.height); calibCtx.stroke();
+                }
+            });
+
+            [0, 11,12,13,14,15,16,23,24].forEach(idx => { 
+                let p = lm[idx];
+                if (p && p.visibility > 0.5) {
+                    if((idx === 15 && isShootingL) || (idx === 16 && isShootingR)) {
+                        calibCtx.fillStyle = '#00ffff'; calibCtx.beginPath(); calibCtx.arc(p.x * calibCanvas.width, p.y * calibCanvas.height, 12, 0, Math.PI*2); calibCtx.fill();
+                        calibCtx.fillStyle = '#ff0000';
+                    } else {
+                        calibCtx.beginPath(); calibCtx.arc(p.x * calibCanvas.width, p.y * calibCanvas.height, 6, 0, Math.PI*2); calibCtx.fill();
+                    }
+                }
+            });
+        }
+
+        function onPoseResults(results) {
+            if (!results.poseLandmarks) return;
+            let lm = results.poseLandmarks;
+
+            let nose = lm[0]; 
+            let sL = lm[11], sR = lm[12], wL = lm[15], wR = lm[16];
+
+            if (!sL || !sR || sL.visibility < 0.5 || sR.visibility < 0.5) return;
+
+            let isJumping = (wL && wL.visibility > 0.5 && wL.y < sL.y - 0.05) && 
+                            (wR && wR.visibility > 0.5 && wR.y < sR.y - 0.05);
+
+            let isShootingL = false;
+            let isShootingR = false;
+            if (!isJumping) {
+                let dxL = wL ? Math.abs(wL.x - sL.x) : 0;
+                let dxR = wR ? Math.abs(wR.x - sR.x) : 0;
+
+                if (wL && wL.visibility > 0.5 && dxL > 0.15) isShootingL = true;
+                if (wR && wR.visibility > 0.5 && dxR > 0.15) isShootingR = true;
+            }
+
+            drawSkeleton(lm, isShootingL, isShootingR); 
+
+            if (calibrationMode && isJumping) {
+                calibrationMode = false;
+                initGame(controlMode);
+                return; 
+            }
+
+            let isEndScreenVisible = document.getElementById('endScreen').style.display === 'flex';
+            if (isEndScreenVisible && isJumping) {
+                initGame(controlMode); // Neustart
+                return;
+            }
+
+            if (isPlaying && player && controlMode === 'camera') {
+                if (isJumping) player.jump();
+                
+                if ((isShootingL || isShootingR) && player.currentWeapon) {
+                    player.shoot();
+                }
+
+                if (nose && nose.visibility > 0.5) {
+                    if (nose.x < 0.42) laneIndex = 2; // Rechts
+                    else if (nose.x > 0.58) laneIndex = 0; // Links
+                    else laneIndex = 1; // Mitte
+                    targetX = (laneIndex - 1) * 350; 
+                }
+            }
+        }
+
+        // --- Steuerung Events (Touch) ---
+        canvas.addEventListener('touchstart', (e) => {
+            if (!isPlaying || !player || controlMode !== 'touch') return;
+            touchX = e.touches[0].clientX; touchY = e.touches[0].clientY; touchStartTime = Date.now();
+        }, {passive: false});
+        canvas.addEventListener('touchmove', (e) => {
+            if (!isPlaying || !player || controlMode !== 'touch') return;
+            e.preventDefault(); 
+            let currentX = e.touches[0].clientX; targetX += (currentX - touchX) * 4.0; 
+            let maxEdge = (roadWidth / 2) - 60;
+            if (targetX > maxEdge) targetX = maxEdge; if (targetX < -maxEdge) targetX = -maxEdge;
+            touchX = currentX;
+        }, {passive: false});
+        canvas.addEventListener('touchend', (e) => {
+            if (!isPlaying || !player || controlMode !== 'touch') return;
+            let dx = e.changedTouches[0].clientX - touchX; let dy = e.changedTouches[0].clientY - touchY;
+            if (Math.abs(dx) < 20 && Math.abs(dy) < 20 && Date.now() - touchStartTime < 300) player.jump();
+        });
+
+        let isMouseDown = false;
+        canvas.addEventListener('mousedown', (e) => {
+            if (!isPlaying || !player || controlMode !== 'touch') return;
+            isMouseDown = true; touchX = e.clientX; touchY = e.clientY; touchStartTime = Date.now();
+        });
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isPlaying || !isMouseDown || !player || controlMode !== 'touch') return;
+            targetX += (e.clientX - touchX) * 4.0;
+            let maxEdge = (roadWidth / 2) - 60;
+            if (targetX > maxEdge) targetX = maxEdge; if (targetX < -maxEdge) targetX = -maxEdge;
+            touchX = e.clientX;
+        });
+        canvas.addEventListener('mouseup', (e) => {
+            if (!isPlaying || !player || controlMode !== 'touch') return;
+            isMouseDown = false; let dx = e.clientX - touchX; let dy = e.clientY - touchY;
+            if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && Date.now() - touchStartTime < 300) player.jump();
+        });
+
+        document.getElementById('throwBtn').addEventListener('click', () => { if(player && player.currentWeapon) player.shoot(); });
+        document.getElementById('throwBtn').addEventListener('touchstart', (e) => { e.stopPropagation(); if(player && player.currentWeapon) player.shoot(); }, {passive: false});
+
+        function project(worldX, worldY, worldZ) {
+            let dz = worldZ - cameraZ;
+            if (dz < 1) return null; 
+            let scale = focalLength / dz;
+            let realX = worldX + getCurve(worldZ);
+            let screenX = (width / 2) + ((realX - cameraX) * scale);
+            
+            // Anpassung an die dynamische Kameraposition (Abfahrt)
+            let screenY = (height / 2) + ((currentCameraY - worldY) * scale) + (height * 0.05); 
+            return { x: screenX, y: screenY, scale: scale };
+        }
+
+        function getRank(racerObj) {
+            let sorted = [...racers].sort((a, b) => b.z - a.z);
+            return sorted.indexOf(racerObj) + 1;
+        }
+
+        // --- Klassen ---
+        class Racer {
+            constructor(x, color, isPlayer, name) {
+                this.x = x; this.z = isPlayer ? 100 : 200 + Math.random() * 200; 
+                this.color = color; this.darkColor = shadeColor(color, -40); 
+                this.isPlayer = isPlayer; this.name = name;
+                
+                this.baseSpeed = isPlayer ? 720 : 680 + Math.random() * 80;
+                this.speed = this.baseSpeed; this.size = 50; this.penaltyTimer = 0;
+                this.baseY = 0; this.vy = 0; this.isJumping = false;
+                this.targetX = x; this.aiTimer = 0; 
+                
+                this.currentWeapon = null;
+                this.stunTimer = 0; this.isShocked = false; this.lean = 0; 
+                this.finishTime = null; 
+            }
+
+            jump() { if (!this.isJumping && this.stunTimer <= 0) { this.vy = 650; this.isJumping = true; } }
+            
+            shoot() {
+                if (!this.currentWeapon) return;
+
+                if (this.currentWeapon === 'rocket') {
+                    let target = null; let minDist = Infinity;
+                    racers.forEach(r => { 
+                        if (r !== this && r.z > this.z && r.z - this.z < minDist) { 
+                            minDist = r.z - this.z; target = r; 
+                        } 
+                    });
+                    projectiles.push(new Projectile(this.x, this.baseY + 40, this.z + 50, target, this));
+                } 
+                else if (this.currentWeapon === 'banana') {
+                    items.push({ z: this.z - 100, x: this.x, type: 'banana', active: true });
+                }
+                else if (this.currentWeapon === 'lightning') {
+                    globalFlashAlpha = 1.0; 
+                    racers.forEach(r => {
+                        if (r !== this && r.z > this.z) {
+                            r.stunTimer = 1.5; r.isShocked = true;
+                        }
+                    });
+                }
+
+                this.currentWeapon = null;
+                if(this.isPlayer) weaponUI.style.display = 'none';
+            }
+
+            update(dt) {
+                if (this.stunTimer > 0) { 
+                    this.stunTimer -= dt; this.speed = 0; 
+                    if(this.stunTimer <= 0) this.isShocked = false; 
+                } 
+                else if (this.penaltyTimer > 0) { this.penaltyTimer -= dt; this.speed = this.baseSpeed * 0.3; } 
+                else { this.speed += (this.baseSpeed - this.speed) * 2 * dt; }
+
+                this.z += this.speed * dt;
+                if (this.z >= finishLineZ && this.finishTime === null) this.finishTime = (Date.now() - raceStartTime) / 1000;
+
+                if (this.isJumping) {
+                    this.baseY += this.vy * dt; this.vy -= 1700 * dt; 
+                    if (this.baseY <= 0) { this.baseY = 0; this.isJumping = false; this.vy = 0; }
+                }
+
+                let oldX = this.x;
+                if (!this.isPlayer) {
+                    this.aiTimer -= dt;
+                    if (this.aiTimer <= 0) { 
+                        const lanes = [-350, 0, 350];
+                        this.targetX = lanes[Math.floor(Math.random() * lanes.length)]; 
+                        this.aiTimer = 1.0 + Math.random() * 2.0; 
+                    }
+                    this.x += (this.targetX - this.x) * 3 * dt;
+                    
+                    if (this.currentWeapon && Math.random() < 0.05) this.shoot();
+
+                    items.forEach(item => {
+                        if (item.type === 'hurdle' && item.active && item.z > this.z && item.z - this.z < 400 && Math.abs(item.x - this.x) < 150) {
+                            if (Math.random() < 0.8) this.jump(); 
+                        }
+                        if (item.type === 'wide_hurdle' && item.active && item.z > this.z && item.z - this.z < 400) {
+                            if (Math.random() < 0.95) this.jump(); 
+                        }
+                        if (item.type === 'banana' && item.active && item.z > this.z && item.z - this.z < 300 && Math.abs(item.x - this.x) < 100) {
+                            if (Math.random() < 0.6) this.jump(); 
+                        }
+                    });
+                } else {
+                    this.x += (targetX - this.x) * 8 * dt; 
+                }
+                this.lean = (this.x - oldX) * 0.1;
+            }
+
+            draw() {
+                let hillY = getHillY(this.z);
+                let runCycle = this.z * 0.04;
+                let waddleY = (!this.isJumping && this.speed > 100 && currentLevel === 1) ? Math.abs(Math.sin(runCycle)) * 12 : 0;
+                let finalY = hillY + this.baseY + waddleY;
+
+                let p = project(this.x, finalY, this.z);
+                if (!p) return; 
+
+                let r = this.size * p.scale;
+                let shadowP = project(this.x, hillY, this.z);
+                if (shadowP) {
+                    let shadowSize = r * (1 - (this.baseY/800)); 
+                    if(shadowSize > 0) { 
+                        // Enhanced diffuse shadow logic
+                        let shadowGrad = ctx.createRadialGradient(shadowP.x, shadowP.y + r*0.7, 0, shadowP.x, shadowP.y + r*0.7, shadowSize);
+                        shadowGrad.addColorStop(0, 'rgba(0,0,0,0.5)');
+                        shadowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                        ctx.fillStyle = shadowGrad; 
+                        ctx.beginPath(); 
+                        ctx.ellipse(shadowP.x, shadowP.y + r*0.7, shadowSize, shadowSize*0.3, 0, 0, Math.PI*2); 
+                        ctx.fill(); 
+                    }
+                }
+
+                ctx.save(); ctx.translate(p.x, p.y);
+                
+                if (this.isShocked) { ctx.rotate((Math.random() - 0.5) * 0.5); }
+                else if (this.stunTimer > 0) { ctx.rotate((this.stunTimer * 10) % (Math.PI*2)); } 
+                else { ctx.rotate(this.lean); }
+
+                let mainCol = this.isShocked ? "#ffff88" : this.color;
+                let darkCol = this.isShocked ? "#bbbb00" : this.darkColor;
+
+                let grad = ctx.createRadialGradient(-r*0.3, -r*0.4, r*0.05, r*0.2, r*0.2, r*1.2);
+                grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.3, mainCol); grad.addColorStop(1, darkCol); 
+                ctx.fillStyle = grad; ctx.lineWidth = 2.5 * p.scale; ctx.strokeStyle = '#000';
+
+                let armSwing = (!this.isJumping && this.speed > 50 && currentLevel === 1) ? Math.sin(runCycle) * 0.6 : (!this.isJumping ? 0 : -1.0);
+                if(this.isShocked) armSwing = -0.5; 
+
+                // Arme
+                ctx.beginPath(); ctx.ellipse(-r*0.75, 0, r*0.25, r*0.4, armSwing, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.ellipse(r*0.75, 0, r*0.25, r*0.4, -armSwing, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+
+                let footL_Y = r*0.6; let footR_Y = r*0.6;
+                if (currentLevel === 1) {
+                    // Dschungel: Strampeln
+                    if(!this.isJumping && this.speed > 50 && !this.isShocked) { footL_Y -= Math.max(0, Math.sin(runCycle)) * r * 0.6; footR_Y -= Math.max(0, Math.sin(runCycle + Math.PI)) * r * 0.6; } 
+                    else if(this.isJumping || this.isShocked) { footL_Y += r*0.2; footR_Y += r*0.2; }
+
+                    ctx.fillStyle = darkCol;
+                    ctx.beginPath(); ctx.ellipse(-r*0.4, footL_Y, r*0.25, r*0.2, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+                    ctx.beginPath(); ctx.ellipse(r*0.4, footR_Y, r*0.25, r*0.2, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+                } else {
+                    // Schnee: Beine hängen auf dem Schlitten
+                    footL_Y += r*0.2; footR_Y += r*0.2;
+                    ctx.fillStyle = darkCol;
+                    ctx.beginPath(); ctx.ellipse(-r*0.4, footL_Y, r*0.25, r*0.2, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+                    ctx.beginPath(); ctx.ellipse(r*0.4, footR_Y, r*0.25, r*0.2, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+                    
+                    // SCHLITTEN ZEICHNEN
+                    ctx.fillStyle = '#a65922'; // Holz
+                    ctx.fillRect(-r*0.8, r*0.8, r*1.6, r*0.25);
+                    ctx.strokeRect(-r*0.8, r*0.8, r*1.6, r*0.25);
+                    ctx.fillStyle = '#999'; // Kufen
+                    ctx.fillRect(-r*0.6, r*1.05, r*0.15, r*0.15);
+                    ctx.fillRect(r*0.45, r*1.05, r*0.15, r*0.15);
+                    ctx.fillRect(-r*0.8, r*1.2, r*1.6, r*0.1);
+                }
+
+                // Körper
+                ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(0, -r*0.3, r*0.65, Math.PI, 0); 
+                ctx.bezierCurveTo(r*0.9, r*0.2, r*0.8, r*0.8, 0, r*0.8); ctx.bezierCurveTo(-r*0.8, r*0.8, -r*0.9, r*0.2, -r*0.65, -r*0.3); ctx.fill(); ctx.stroke();
+                
+                if (this.isShocked) {
+                    ctx.strokeStyle = "#ffff00"; ctx.lineWidth = 4 * p.scale;
+                    ctx.beginPath(); ctx.moveTo(-r, -r); ctx.lineTo(-r*0.5, -r*0.5); ctx.lineTo(-r*0.8, 0); ctx.lineTo(-r*0.2, r*0.5); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(r, -r); ctx.lineTo(r*0.5, -r*0.5); ctx.lineTo(r*0.8, 0); ctx.lineTo(r*0.2, r*0.5); ctx.stroke();
+                }
+
+                ctx.restore();
+
+                if (this.penaltyTimer > 0 && !this.isJumping && !this.isShocked) {
+                    let bombP = project(this.x, hillY + 5, this.z - 70);
+                    if(bombP) {
+                        ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(bombP.x, bombP.y, 35*bombP.scale, 0, Math.PI*2); ctx.fill();
+                        ctx.fillStyle = '#777'; ctx.beginPath(); ctx.arc(bombP.x - 10*bombP.scale, bombP.y - 10*bombP.scale, 8*bombP.scale, 0, Math.PI*2); ctx.fill();
+                        ctx.strokeStyle = '#555'; ctx.lineWidth = 2 * p.scale; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(bombP.x, bombP.y); ctx.stroke();
+                    }
+                }
+
+                if (this.isPlayer) {
+                    ctx.fillStyle = 'white'; ctx.font = 'bold ' + Math.max(14, 32 * p.scale) + 'px Arial';
+                    ctx.textAlign = 'center'; ctx.fillText('YOU', p.x, p.y - r - (35 * p.scale));
+                    ctx.beginPath(); ctx.moveTo(p.x - 6*p.scale, p.y - r - 25*p.scale); ctx.lineTo(p.x + 6*p.scale, p.y - r - 25*p.scale); ctx.lineTo(p.x, p.y - r - 15*p.scale); ctx.fill();
+                }
+            }
+        }
+
+        class Projectile {
+            constructor(x, y, z, target, owner) { this.x = x; this.y = y; this.z = z; this.target = target; this.owner = owner; this.speed = 1600; this.active = true; } 
+            update(dt) { this.z += this.speed * dt; if (this.target) { this.x += (this.target.x - this.x) * 6 * dt; } }
+            draw() {
+                let hillY = getHillY(this.z);
+                let p = project(this.x, hillY + 40, this.z); if (!p) return;
+                ctx.fillStyle = '#ffaa00'; ctx.beginPath(); ctx.arc(p.x, p.y, 30*p.scale, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#ff3333'; ctx.beginPath(); ctx.arc(p.x, p.y, 18*p.scale, 0, Math.PI*2); ctx.fill();
+                let tailP = project(this.x, getHillY(this.z - 50) + 40, this.z - 50);
+                if(tailP) { ctx.strokeStyle = 'rgba(255, 50, 0, 0.8)'; ctx.lineWidth = 18*p.scale; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tailP.x, tailP.y); ctx.stroke(); }
+            }
+        }
+
+        class FinishGate {
+            constructor(z) { this.z = z; }
+            draw() {
+                let hillY = getHillY(this.z);
+                let pL = project(-roadWidth/2 - 100, hillY, this.z); let pR = project(roadWidth/2 + 100, hillY, this.z);
+                let pTopL = project(-roadWidth/2 - 100, hillY + 800, this.z); let pTopR = project(roadWidth/2 + 100, hillY + 800, this.z);
+                if (!pL || !pR || !pTopL || !pTopR) return;
+
+                ctx.fillStyle = '#ffaa00'; let pw = 100 * pL.scale;
+                ctx.fillRect(pL.x - pw/2, pTopL.y, pw, pL.y - pTopL.y); ctx.fillRect(pR.x - pw/2, pTopR.y, pw, pR.y - pTopR.y);
+                let bh = 250 * pTopL.scale; ctx.fillStyle = '#ffffff';
+                ctx.fillRect(pTopL.x - pw/2, pTopL.y, (pTopR.x - pTopL.x) + pw, bh);
+                ctx.fillStyle = '#000000'; ctx.font = 'bold ' + (160 * pTopL.scale) + 'px "Arial Black"';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText("FINISH", (pTopL.x + pTopR.x)/2, pTopL.y + bh/2);
+            }
+        }
+        
+        class Tree {
+            constructor(z, side) {
+                this.z = z;
+                this.x = side === 'left' ? -roadWidth/2 - 200 - Math.random()*250 : roadWidth/2 + 200 + Math.random()*250;
+                this.size = 350 + Math.random() * 200;
+            }
+            draw() {
+                let hillY = getHillY(this.z);
+                let p = project(this.x, hillY + 50, this.z); 
+                if(!p) return;
+
+                let t = themes[currentLevel];
+                let scale = p.scale;
+                let w = this.size * 0.15 * scale;
+                let h = this.size * scale;
+
+                ctx.fillStyle = t.treeTrunk; ctx.fillRect(p.x - w/2, p.y - h, w, h);
+
+                ctx.fillStyle = t.treeL1;
+                ctx.beginPath(); ctx.arc(p.x, p.y - h + w, this.size*0.4*scale, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = t.treeL2;
+                ctx.beginPath(); ctx.arc(p.x - w*2, p.y - h + w*2, this.size*0.3*scale, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(p.x + w*2, p.y - h + w*2, this.size*0.3*scale, 0, Math.PI*2); ctx.fill();
+            }
+        }
+
+        function createItems() {
+            items = []; trees = [];
+            let nextWideHurdleZ = 2500; 
+            const lanes = [-350, 0, 350]; 
+
+            for (let z = 800; z < finishLineZ - 800; z += 450) {
+                if (z >= nextWideHurdleZ) {
+                    items.push({ z: z, x: 0, width: 1200, type: 'wide_hurdle', active: true });
+                    nextWideHurdleZ += 3000; 
+                    continue;
+                }
+
+                let typeRand = Math.random();
+                let x = lanes[Math.floor(Math.random() * lanes.length)]; 
+
+                if (typeRand > 0.8) items.push({ z: z, x: x, type: 'box', active: true, respawnTimer: 0 }); 
+                else if (typeRand > 0.55) items.push({ z: z, x: x, width: 250, type: 'hurdle', active: true }); 
+                else if (typeRand > 0.35) items.push({ z: z, x: x, type: 'bomb', active: true });
+                else {
+                    let isGood = Math.random() > 0.4;
+                    items.push({ z: z, x: x, type: 'text', text: isGood ? (Math.random()>0.8?"x2":"+1") : "-4", color: isGood ? (Math.random()>0.8?"#ff55ff":"#a8ff3e") : "#ff4444", isGood: isGood, active: true });
+                }
+
+                if (Math.random() > 0.2) trees.push(new Tree(z, 'left'));
+                if (Math.random() > 0.2) trees.push(new Tree(z, 'right'));
+            }
+            items.push({ z: finishLineZ, type: 'gate' });
+        }
+
+        function initGame(mode) {
+            controlMode = mode;
+            document.getElementById('controlScreen').style.display = 'none';
+            document.getElementById('calibrationScreen').style.display = 'none';
+            document.getElementById('endScreen').style.display = 'none';
+            rankDisplay.style.display = 'block';
+            weaponUI.style.display = 'none';
+            
+            if(controlMode === 'camera') {
+                cameraPip.style.display = 'block';
+                cameraPip.className = "video-container pip-corner"; 
+            } else {
+                cameraPip.style.display = 'none';
+            }
+            
+            cameraZ = 0; targetX = 0; projectiles = []; laneIndex = 1; globalFlashAlpha = 0;
+            
+            player = new Racer(0, '#ffffff', true, "Du"); 
+            racers = [
+                player,
+                new Racer(-350, '#ff3333', false, "Rot"), 
+                new Racer(350, '#3333ff', false, "Blau"),  
+                new Racer(0, '#ffff33', false, "Gelb")     
+            ];
+            
+            createItems();
+            
+            raceStartTime = Date.now();
+            lastTime = 0; 
+            isPlaying = true;
+            requestAnimationFrame(gameLoop);
+        }
+
+        function restartGame() {
+            initGame(controlMode);
+        }
+
+        function checkCollisions() {
+            racers.forEach(r => {
+                items.forEach(item => {
+                    if (!item.active || item.type === 'gate') return;
+                    
+                    if (item.type === 'banana' && Math.abs(r.z - item.z) < 60 && Math.abs(r.x - item.x) < 80 && r.baseY < 50) {
+                        item.active = false; r.stunTimer = 1.2; return;
+                    }
+
+                    if (Math.abs(r.z - item.z) < 60) {
+                        if ((item.type === 'hurdle' || item.type === 'wide_hurdle') && Math.abs(r.x - item.x) < item.width/2 + r.size && r.baseY < 80) { 
+                            item.active = false; r.penaltyTimer = 1.5; 
+                        } else if (item.type !== 'hurdle' && item.type !== 'wide_hurdle' && Math.abs(r.x - item.x) < 80) { 
+                            if (item.type === 'box') {
+                                item.active = false; 
+                                item.respawnTimer = 5.0; 
+                                
+                                let rank = getRank(r);
+                                if (rank === 1) r.currentWeapon = 'banana';
+                                else if (rank === racers.length) r.currentWeapon = 'lightning';
+                                else r.currentWeapon = 'rocket';
+
+                                if(r.isPlayer) {
+                                    weaponUI.style.display = 'block'; 
+                                    if(r.currentWeapon === 'rocket') {
+                                        throwBtn.innerText = '🚀'; throwBtn.style.background = 'radial-gradient(circle, #ff5555, #aa0000)';
+                                    } else if (r.currentWeapon === 'banana') {
+                                        throwBtn.innerText = '🍌'; throwBtn.style.background = 'radial-gradient(circle, #ffdd00, #aa8800)';
+                                    } else if (r.currentWeapon === 'lightning') {
+                                        throwBtn.innerText = '⚡'; throwBtn.style.background = 'radial-gradient(circle, #00eeff, #0055aa)';
+                                    }
+                                }
+                            } else if (item.type === 'bomb') { item.active = false; r.penaltyTimer = 2.0; } 
+                            else if (item.type === 'text') {
+                                item.active = false;
+                                if (item.isGood) { r.baseSpeed += (item.text === "x2" ? 80 : 30); r.size = Math.min(85, r.size + 8); } 
+                                else { r.baseSpeed -= 50; if(r.baseSpeed < 320) r.baseSpeed = 320; r.size = Math.max(35, r.size - 8); }
+                            }
+                        }
+                    }
+                });
+            });
+
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                let proj = projectiles[i]; if (!proj.active) continue;
+                racers.forEach(r => {
+                    if (r !== proj.owner && Math.abs(proj.z - r.z) < 80 && Math.abs(proj.x - r.x) < 80) {
+                        r.stunTimer = 1.0; r.size = Math.max(40, r.size - 10); proj.active = false;
+                    }
+                });
+                if(!proj.active) projectiles.splice(i, 1);
+            }
+        }
+
+        function drawBackground() {
+            let t = themes[currentLevel];
+            let grad = ctx.createLinearGradient(0, 0, 0, height/2 + 100);
+            grad.addColorStop(0, t.skyTop); grad.addColorStop(1, t.skyBot);
+            ctx.fillStyle = grad; ctx.fillRect(0, 0, width, height);
+
+            // Enhanced background celestial bodies
+            if (currentLevel === 1) {
+                // Bright Sun for Jungle
+                let sunX = width * 0.8;
+                let sunY = height * 0.25;
+                let sunGrad = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, 150);
+                sunGrad.addColorStop(0, 'rgba(255, 255, 200, 1)');
+                sunGrad.addColorStop(0.3, 'rgba(255, 220, 100, 0.8)');
+                sunGrad.addColorStop(1, 'rgba(255, 220, 100, 0)');
+                ctx.fillStyle = sunGrad;
+                ctx.beginPath(); ctx.arc(sunX, sunY, 150, 0, Math.PI*2); ctx.fill();
+
+                // Detailed Clouds
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                let cloudOffset = (Date.now() * 0.015) % (width * 1.5) - (width * 0.25);
+                ctx.beginPath(); ctx.arc(cloudOffset + 100, height*0.18, 50, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(cloudOffset + 160, height*0.15, 80, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(cloudOffset + 240, height*0.17, 60, 0, Math.PI*2); ctx.fill();
+                
+                let cloudOffset2 = (Date.now() * 0.01) % (width * 1.5) - (width * 0.25);
+                ctx.beginPath(); ctx.arc(cloudOffset2 + width*0.5, height*0.25, 40, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(cloudOffset2 + width*0.55, height*0.23, 70, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(cloudOffset2 + width*0.62, height*0.26, 45, 0, Math.PI*2); ctx.fill();
+
+            } else {
+                // Glowy Moon for Snow
+                let moonX = width * 0.2;
+                let moonY = height * 0.2;
+                let moonGrad = ctx.createRadialGradient(moonX, moonY, 20, moonX, moonY, 120);
+                moonGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+                moonGrad.addColorStop(0.2, 'rgba(200, 230, 255, 0.8)');
+                moonGrad.addColorStop(1, 'rgba(150, 200, 255, 0)');
+                ctx.fillStyle = moonGrad;
+                ctx.beginPath(); ctx.arc(moonX, moonY, 120, 0, Math.PI*2); ctx.fill();
+
+                // Enhanced Snowfall Arrays
+                ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                for(let s=0; s<60; s++) {
+                    let sx = (s * 153 + Date.now()*0.02) % width;
+                    let sy = (s * 117 + Date.now()*0.05) % height; // Snow falls all the way down
+                    ctx.beginPath(); ctx.arc(sx, sy, (s%3)+1.5, 0, Math.PI*2); ctx.fill();
+                }
+            }
+
+            // Mountain Range Gradient Enhancement
+            let bgShift = (cameraX * 0.1) % (width * 2);
+            let hillGrad = ctx.createLinearGradient(0, height/2, 0, height);
+            hillGrad.addColorStop(0, t.bgHill);
+            let darkHill = shadeColor(t.bgHill, -30);
+            hillGrad.addColorStop(1, darkHill);
+            
+            ctx.fillStyle = hillGrad; 
+            ctx.beginPath(); ctx.moveTo(0, height/2 + 80);
+            for(let i=-50; i<=width+50; i+=100) ctx.lineTo(i, height/2 + Math.sin((i + bgShift)*0.01)*50 + 20);
+            ctx.lineTo(width, height); ctx.lineTo(0, height); ctx.fill();
+        }
+
+        function gameLoop(currentTime) {
+            if (!isPlaying) return;
+            requestAnimationFrame(gameLoop);
+
+            if(lastTime === 0) lastTime = currentTime;
+            let dt = (currentTime - lastTime) / 1000; 
+            lastTime = currentTime;
+            if (dt > 0.05) dt = 0.05; 
+            if (dt < 0) dt = 0;
+
+            racers.forEach(r => r.update(dt));
+            projectiles.forEach(p => p.update(dt));
+            checkCollisions();
+            
+            items.forEach(item => {
+                if (!item.active && item.type === 'box' && item.respawnTimer > 0) {
+                    item.respawnTimer -= dt;
+                    if (item.respawnTimer <= 0) item.active = true; 
+                }
+            });
+            
+            cameraZ = player.z - 500; 
+            let targetCameraX = getCurve(player.z) + player.x * 0.85; 
+            cameraX += (targetCameraX - cameraX) * 5 * dt;
+
+            // Kamera Höhe passt sich exakt der Abfahrt an
+            currentCameraY = getHillY(player.z) + cameraHeight;
+
+            drawBackground();
+
+            let t = themes[currentLevel];
+
+            let startSegment = Math.floor(cameraZ / segmentLength);
+            for (let i = startSegment + drawDistance; i > startSegment; i--) {
+                let z1 = i * segmentLength; let z2 = (i + 1) * segmentLength;
+                let y1 = getHillY(z1); let y2 = getHillY(z2);
+
+                let p1L = project(-roadWidth/2, y1, z1); let p1R = project(roadWidth/2, y1, z1);
+                let p2L = project(-roadWidth/2, y2, z2); let p2R = project(roadWidth/2, y2, z2);
+                let w1L = project(-roadWidth/2, y1 + 180, z1); let w1R = project(roadWidth/2, y1 + 180, z1);
+                let w2L = project(-roadWidth/2, y2 + 180, z2); let w2R = project(roadWidth/2, y2 + 180, z2);
+                let out1L = project(-roadWidth*3, y1 + 130, z1); let out1R = project(roadWidth*3, y1 + 130, z1);
+                let out2L = project(-roadWidth*3, y2 + 130, z2); let out2R = project(roadWidth*3, y2 + 130, z2);
+
+                if (p1L && p1R && p2L && p2R && w1L && w1R && w2L && w2R) {
+                    let isDark = (i % 2 === 0);
+                    
+                    ctx.fillStyle = isDark ? t.outDark : t.outLight;
+                    if(out1L && out2L) {
+                        ctx.beginPath(); ctx.moveTo(out1L.x, out1L.y); ctx.lineTo(w1L.x, w1L.y); ctx.lineTo(w2L.x, w2L.y); ctx.lineTo(out2L.x, out2L.y); ctx.fill();
+                        ctx.beginPath(); ctx.moveTo(w1R.x, w1R.y); ctx.lineTo(out1R.x, out1R.y); ctx.lineTo(out2R.x, out2R.y); ctx.lineTo(w2R.x, w2R.y); ctx.fill();
+                    }
+                    
+                    ctx.fillStyle = isDark ? t.wallDark : t.wallLight;
+                    ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(w1L.x, w1L.y); ctx.lineTo(w2L.x, w2L.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
+                    ctx.fillStyle = isDark ? t.wallTopDark : t.wallTopLight; 
+                    ctx.beginPath(); ctx.moveTo(p1R.x, p1R.y); ctx.lineTo(w1R.x, w1R.y); ctx.lineTo(w2R.x, w2R.y); ctx.lineTo(p2R.x, p2R.y); ctx.fill();
+
+                    ctx.fillStyle = isDark ? t.roadDark : t.roadLight;
+                    ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(p1R.x, p1R.y); ctx.lineTo(p2R.x, p2R.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
+
+                    let p1M1 = project(-roadWidth/6, y1, z1); let p1M2 = project(roadWidth/6, y1, z1);
+                    let p2M1 = project(-roadWidth/6, y2, z2); let p2M2 = project(roadWidth/6, y2, z2);
+                    
+                    ctx.fillStyle = isDark ? t.roadMDark : t.roadMLight; 
+                    ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(p1M1.x, p1M1.y); ctx.lineTo(p2M1.x, p2M1.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
+                    ctx.beginPath(); ctx.moveTo(p1M2.x, p1M2.y); ctx.lineTo(p1R.x, p1R.y); ctx.lineTo(p2R.x, p2R.y); ctx.lineTo(p2M2.x, p2M2.y); ctx.fill();
+
+                    if (z1 <= finishLineZ && z2 > finishLineZ) {
+                        ctx.fillStyle = 'white'; ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(p1R.x, p1R.y); ctx.lineTo(p2R.x, p2R.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
+                        ctx.fillStyle = 'black'; ctx.beginPath(); ctx.moveTo(p1M1.x, p1M1.y); ctx.lineTo(p1M2.x, p1M2.y); ctx.lineTo(p2M2.x, p2M2.y); ctx.lineTo(p2M1.x, p2M1.y); ctx.fill();
+                    }
+                }
+            }
+
+            let drawables = [];
+            let gateObj = new FinishGate(finishLineZ); drawables.push({ type: 'gate', obj: gateObj, z: finishLineZ });
+            racers.forEach(r => drawables.push({ type: 'racer', obj: r, z: r.z }));
+            projectiles.forEach(p => drawables.push({ type: 'proj', obj: p, z: p.z }));
+            trees.forEach(tr => { if(tr.z > cameraZ && tr.z < cameraZ + drawDistance*segmentLength) drawables.push({ type: 'tree', obj: tr, z: tr.z }) });
+            items.forEach(i => { if(i.active && i.type !== 'gate') drawables.push({ type: 'item', obj: i, z: i.z }); });
+            drawables.sort((a, b) => b.z - a.z);
+
+            drawables.forEach(d => {
+                if (d.type === 'racer' || d.type === 'proj' || d.type === 'gate' || d.type === 'tree') d.obj.draw();
+                if (d.type === 'item') {
+                    let item = d.obj; let hillY = getHillY(item.z);
+                    
+                    if (item.type === 'banana') {
+                        let p = project(item.x, hillY + 15, item.z);
+                        if (p) {
+                            ctx.font = 'bold ' + Math.max(10, 70 * p.scale) + 'px "Arial"';
+                            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🍌', p.x, p.y);
+                        }
+                    } else if (item.type === 'hurdle' || item.type === 'wide_hurdle') {
+                        let p1 = project(item.x - item.width/2, hillY, item.z); let p2 = project(item.x + item.width/2, hillY, item.z);
+                        let topP1 = project(item.x - item.width/2, getHillY(item.z + 20) + 60, item.z + 20); 
+                        let topP2 = project(item.x + item.width/2, getHillY(item.z + 20) + 60, item.z + 20);
+                        if(p1 && p2 && topP1 && topP2) {
+                            let h = 60 * p1.scale; 
+                            ctx.fillStyle = item.type === 'wide_hurdle' ? '#ee0000' : '#cc8800'; 
+                            if(currentLevel === 2 && item.type !== 'wide_hurdle') ctx.fillStyle = '#66b3ff'; // Eisige Hürden im Schnee
+                            ctx.fillRect(p1.x, p1.y - h, p2.x - p1.x, h);
+                            
+                            ctx.fillStyle = '#222'; for(let s = p1.x; s < p2.x; s += 40*p1.scale) ctx.fillRect(s, p1.y - h, 20*p1.scale, h);
+                            
+                            ctx.fillStyle = item.type === 'wide_hurdle' ? '#ff3333' : '#ffaa00'; 
+                            if(currentLevel === 2 && item.type !== 'wide_hurdle') ctx.fillStyle = '#99ccff';
+                            ctx.beginPath(); ctx.moveTo(p1.x, p1.y - h); ctx.lineTo(p2.x, p2.y - h); ctx.lineTo(topP2.x, topP2.y); ctx.lineTo(topP1.x, topP1.y); ctx.fill();
+                        }
+                    } else if (item.type === 'box') {
+                        let hoverY = hillY + 40 + Math.sin(Date.now()*0.005 + item.z)*15; let p = project(item.x, hoverY, item.z);
+                        if(p) {
+                            let r = 40 * p.scale; ctx.fillStyle = 'rgba(0, 136, 255, 0.8)'; ctx.fillRect(p.x - r, p.y - r, r*2, r*2);
+                            ctx.strokeStyle = '#fff'; ctx.lineWidth = 5*p.scale; ctx.strokeRect(p.x - r, p.y - r, r*2, r*2);
+                            ctx.fillStyle = '#fff'; ctx.font = 'bold '+ (45*p.scale) +'px Arial'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('?', p.x, p.y);
+                        }
+                    } else {
+                        let hoverY = item.type === 'text' ? hillY + 60 + Math.sin(Date.now()*0.005 + item.z)*10 : hillY + 15; let p = project(item.x, hoverY, item.z);
+                        if (p) {
+                            if (item.type === 'bomb') {
+                                let r = 30 * p.scale; ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
+                            } else {
+                                ctx.font = 'bold ' + Math.max(10, 85 * p.scale) + 'px "Arial Black"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                                ctx.lineWidth = 10 * p.scale; ctx.strokeStyle = '#000'; ctx.strokeText(item.text, p.x, p.y); ctx.fillStyle = item.color; ctx.fillText(item.text, p.x, p.y);
+                            }
+                        }
+                    }
+                }
+            });
+
+            if (globalFlashAlpha > 0) {
+                ctx.fillStyle = `rgba(255, 255, 200, ${globalFlashAlpha})`;
+                ctx.fillRect(0, 0, width, height);
+                globalFlashAlpha -= dt * 2; 
+            }
+
+            let rank = getRank(player);
+            rankDisplay.textContent = rank + (rank===1?"st":rank===2?"nd":rank===3?"rd":"th");
+            rankDisplay.style.color = rank === 1 ? "#00ff00" : (rank === 4 ? "#ff3333" : "#ffcc00");
+
+            if (player.z >= finishLineZ + 300) { 
+                isPlaying = false; weaponUI.style.display = 'none'; rankDisplay.style.display = 'none';
+                
+                if(controlMode === 'camera') {
+                    document.getElementById('restartHint').style.display = 'block';
+                } else {
+                    document.getElementById('restartHint').style.display = 'none';
+                }
+                
+                let currentTotalTime = (Date.now() - raceStartTime) / 1000;
+                racers.forEach(r => { if (r.finishTime === null) r.finishTime = currentTotalTime + ((finishLineZ - r.z) / Math.max(r.speed, 50)); });
+
+                let finalRanking = [...racers].sort((a, b) => a.finishTime - b.finishTime);
+                let playerFinalRank = finalRanking.findIndex(r => r.isPlayer) + 1;
+
+                let rt = document.getElementById('resultText');
+                rt.textContent = (playerFinalRank === 1) ? "1. PLATZ!" : "FAIL";
+                rt.className = (playerFinalRank === 1) ? "result-banner win" : "result-banner fail";
+
+                let lbHTML = "";
+                finalRanking.forEach((r, index) => {
+                    lbHTML += `
+                        <div class="lb-row ${r.isPlayer ? "is-player" : ""}">
+                            <div class="lb-rank">${index + 1}.</div>
+                            <div class="lb-name" style="color: ${r.color}">${r.name}</div>
+                            <div class="lb-time">${formatTime(r.finishTime)}</div>
+                        </div>
+                    `;
+                });
+                document.getElementById('leaderboard').innerHTML = lbHTML;
+                document.getElementById('endScreen').style.display = 'flex';
+            }
+
+            // --- Post-Processing (Vignette) ---
+            let vignette = ctx.createRadialGradient(width/2, height/2, height*0.4, width/2, height/2, height);
+            vignette.addColorStop(0, 'rgba(0,0,0,0)');
+            vignette.addColorStop(1, 'rgba(0,0,0,0.6)');
+            ctx.fillStyle = vignette;
+            ctx.fillRect(0, 0, width, height);
+        }
+    </script>
+</body>
+</html>
