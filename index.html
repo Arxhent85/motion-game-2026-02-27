@@ -830,8 +830,8 @@
                     let nose = poses[0].keypoints[0];
                     if (nose && nose.score > 0.3) {
                         let currentLean = 'center';
-                        if (nose.x < 144) currentLean = 'right';
-                        else if (nose.x > 176) currentLean = 'left';
+                        if (nose.x < 130) currentLean = 'right';
+                        else if (nose.x > 190) currentLean = 'left';
 
                         if (typeof lastPhysicalLean1 === 'undefined') lastPhysicalLean1 = 'center';
                         if (currentLean !== lastPhysicalLean1) {
@@ -849,8 +849,8 @@
                     let nose = poses[1].keypoints[0];
                     if (nose && nose.score > 0.3) {
                         let currentLean = 'center';
-                        if (nose.x < 144) currentLean = 'right';
-                        else if (nose.x > 176) currentLean = 'left';
+                        if (nose.x < 130) currentLean = 'right';
+                        else if (nose.x > 190) currentLean = 'left';
 
                         if (typeof lastPhysicalLean2 === 'undefined') lastPhysicalLean2 = 'center';
                         if (currentLean !== lastPhysicalLean2) {
