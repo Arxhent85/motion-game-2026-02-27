@@ -429,11 +429,35 @@
             padding: 10px;
             border-radius: 10px;
         }
+
+        #fullscreenBtn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            padding: 10px 15px;
+            background: rgba(0, 0, 0, 0.5);
+            color: white;
+            border: 2px solid white;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            backdrop-filter: blur(5px);
+            transition: background 0.2s;
+        }
+
+        #fullscreenBtn:hover {
+            background: rgba(0, 0, 0, 0.8);
+        }
+
+        .hidden {
+            display: none !important;
+        }
     </style>
 </head>
 
 <body>
-
+    <button id="fullscreenBtn" onclick="toggleFullscreen()">VOLLBILD 🔲</button>
     <canvas id="gameCanvas"></canvas>
 
     <div id="cameraPip" class="video-container pip-center">
@@ -645,6 +669,18 @@
             document.getElementById('controlScreen').style.display = 'flex';
         }
 
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch((err) => {
+                    console.log(`Error attempting to enable fullscreen: ${err.message}`);
+                });
+                document.getElementById('fullscreenBtn').innerText = "VOLLBILD BEENDEN ✖";
+            } else {
+                document.exitFullscreen();
+                document.getElementById('fullscreenBtn').innerText = "VOLLBILD 🔲";
+            }
+        }
+
         // --- TFJS MoveNet Body Tracking Engine ---
         async function startCalibration() {
             controlMode = 'camera';
@@ -771,15 +807,15 @@
                 let nose = kp[0];
                 let sL = kp[5], sR = kp[6], wL = kp[9], wR = kp[10];
 
-                if (!sL || !sR || sL.score < 0.3 || sR.score < 0.3) {
+                if (!sL || !sR || sL.score < 0.2 || sR.score < 0.2) {
                     isJumpingArr[index] = false; isShootingLArr[index] = false;
                     isShootingRArr[index] = false; isArmsOutstretchedArr[index] = false;
                     bothJumping = false;
                     return;
                 }
 
-                let isJumping = (wL && wL.score > 0.3 && wL.y < sL.y - 15) &&
-                    (wR && wR.score > 0.3 && wR.y < sR.y - 15);
+                let isJumping = (wL && wL.score > 0.2 && wL.y < sL.y - 10) &&
+                    (wR && wR.score > 0.2 && wR.y < sR.y - 10);
 
                 isJumpingArr[index] = isJumping;
                 if (isJumping) anyJumping = true;
@@ -790,18 +826,18 @@
                 if (!isJumping) {
                     let dxL = wL ? Math.abs(wL.x - sL.x) : 0;
                     let dxR = wR ? Math.abs(wR.x - sR.x) : 0;
-                    if (wL && wL.score > 0.3 && dxL > 45) isShootingL = true;
-                    if (wR && wR.score > 0.3 && dxR > 45) isShootingR = true;
+                    if (wL && wL.score > 0.2 && dxL > 30) isShootingL = true;
+                    if (wR && wR.score > 0.2 && dxR > 30) isShootingR = true;
                 }
                 isShootingLArr[index] = isShootingL;
                 isShootingRArr[index] = isShootingR;
 
                 let isArmsOut = false;
                 if (!isJumping) {
-                    if (wL && wR && sL && sR && wL.score > 0.3 && wR.score > 0.3) {
+                    if (wL && wR && sL && sR && wL.score > 0.2 && wR.score > 0.2) {
                         let lDist = sL.x - wL.x;
                         let rDist = wR.x - sR.x;
-                        if (lDist > 45 && rDist > 45 && Math.abs(wL.y - sL.y) < 40 && Math.abs(wR.y - sR.y) < 40) {
+                        if (lDist > 30 && rDist > 30 && Math.abs(wL.y - sL.y) < 50 && Math.abs(wR.y - sR.y) < 50) {
                             isArmsOut = true;
                         }
                     }
@@ -846,10 +882,10 @@
                     let canShoot0 = isTwoPlayer ? isShootingLArr[0] : (isShootingLArr[0] || isShootingRArr[0]);
                     if (canShoot0 && player.currentWeapon) player.shoot();
                     let nose = poses[0].keypoints[0];
-                    if (nose && nose.score > 0.3) {
+                    if (nose && nose.score > 0.2) {
                         let currentLean = 'center';
-                        if (nose.x < baseNoseX1 - 25) currentLean = 'right';
-                        else if (nose.x > baseNoseX1 + 25) currentLean = 'left';
+                        if (nose.x < baseNoseX1 - 15) currentLean = 'right';
+                        else if (nose.x > baseNoseX1 + 15) currentLean = 'left';
 
                         if (typeof lastPhysicalLean1 === 'undefined') lastPhysicalLean1 = 'center';
                         if (currentLean !== lastPhysicalLean1) {
@@ -865,10 +901,10 @@
                     if (isJumpingArr[1]) player2.jump();
                     if (isShootingRArr[1] && player2.currentWeapon) player2.shoot();
                     let nose = poses[1].keypoints[0];
-                    if (nose && nose.score > 0.3) {
+                    if (nose && nose.score > 0.2) {
                         let currentLean = 'center';
-                        if (nose.x < baseNoseX2 - 25) currentLean = 'right';
-                        else if (nose.x > baseNoseX2 + 25) currentLean = 'left';
+                        if (nose.x < baseNoseX2 - 15) currentLean = 'right';
+                        else if (nose.x > baseNoseX2 + 15) currentLean = 'left';
 
                         if (typeof lastPhysicalLean2 === 'undefined') lastPhysicalLean2 = 'center';
                         if (currentLean !== lastPhysicalLean2) {
