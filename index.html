@@ -535,7 +535,7 @@
         const cameraHeight = 350; const focalLength = 320;
         const drawDistance = 45; const segmentLength = 120;
         const roadWidth = 1000;
-        const finishLineZ = 75000;
+        const finishLineZ = 41250;
 
         let player = null;
         let racers = [], items = [], projectiles = [], trees = [];
@@ -1178,7 +1178,7 @@
             let nextWideHurdleZ = 2500;
             const lanes = [-350, 0, 350];
 
-            for (let z = 800; z < finishLineZ - 800; z += 450) {
+            for (let z = 800; z < finishLineZ - 800; z += 650) {
                 if (z >= nextWideHurdleZ) {
                     items.push({ z: z, x: 0, width: 1200, type: 'wide_hurdle', active: true });
                     nextWideHurdleZ += 3000;
