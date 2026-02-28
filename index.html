@@ -552,6 +552,7 @@
         let racers = [], items = [], projectiles = [], trees = [];
         let targetX1 = 0; let targetX2 = 0; // targetX für Spieler 1 und 2
         let touchX = 0, touchY = 0, touchStartTime = 0;
+        let baseNoseX1 = 160; let baseNoseX2 = 160;
 
         let laneIndex1 = 1; let laneIndex2 = 1;
         let detector = null; // TensorFlow.js Detector
@@ -812,6 +813,8 @@
 
             if (calibrationMode && ((isTwoPlayer && bothJumping) || (!isTwoPlayer && anyJumping))) {
                 calibrationMode = false;
+                if (poses[0]) baseNoseX1 = poses[0].keypoints[0].x;
+                if (isTwoPlayer && poses[1]) baseNoseX2 = poses[1].keypoints[0].x;
                 initGame(controlMode);
                 return;
             }
@@ -820,6 +823,8 @@
 
             if (isEndScreenVisible) {
                 if ((isTwoPlayer && bothJumping) || (!isTwoPlayer && anyJumping)) {
+                    if (poses[0]) baseNoseX1 = poses[0].keypoints[0].x;
+                    if (isTwoPlayer && poses[1]) baseNoseX2 = poses[1].keypoints[0].x;
                     initGame(controlMode);
                     return;
                 }
@@ -843,8 +848,8 @@
                     let nose = poses[0].keypoints[0];
                     if (nose && nose.score > 0.3) {
                         let currentLean = 'center';
-                        if (nose.x < 130) currentLean = 'right';
-                        else if (nose.x > 190) currentLean = 'left';
+                        if (nose.x < baseNoseX1 - 25) currentLean = 'right';
+                        else if (nose.x > baseNoseX1 + 25) currentLean = 'left';
 
                         if (typeof lastPhysicalLean1 === 'undefined') lastPhysicalLean1 = 'center';
                         if (currentLean !== lastPhysicalLean1) {
@@ -862,8 +867,8 @@
                     let nose = poses[1].keypoints[0];
                     if (nose && nose.score > 0.3) {
                         let currentLean = 'center';
-                        if (nose.x < 130) currentLean = 'right';
-                        else if (nose.x > 190) currentLean = 'left';
+                        if (nose.x < baseNoseX2 - 25) currentLean = 'right';
+                        else if (nose.x > baseNoseX2 + 25) currentLean = 'left';
 
                         if (typeof lastPhysicalLean2 === 'undefined') lastPhysicalLean2 = 'center';
                         if (currentLean !== lastPhysicalLean2) {
