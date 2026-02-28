@@ -435,6 +435,7 @@
             top: 20px;
             right: 20px;
             z-index: 1000;
+            pointer-events: auto;
             padding: 10px 15px;
             background: rgba(0, 0, 0, 0.5);
             color: white;
@@ -670,16 +671,20 @@
         }
 
         function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch((err) => {
-                    console.log(`Error attempting to enable fullscreen: ${err.message}`);
-                });
+            let elem = document.documentElement;
+            if (!document.fullscreenElement && !document.mozFullScreenElement && !document.webkitFullscreenElement && !document.msFullscreenElement) {
+                if (elem.requestFullscreen) { elem.requestFullscreen(); }
+                else if (elem.webkitRequestFullscreen) { elem.webkitRequestFullscreen(); }
+                else if (elem.msRequestFullscreen) { elem.msRequestFullscreen(); }
                 document.getElementById('fullscreenBtn').innerText = "VOLLBILD BEENDEN ✖";
             } else {
-                document.exitFullscreen();
+                if (document.exitFullscreen) { document.exitFullscreen(); }
+                else if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); }
+                else if (document.msExitFullscreen) { document.msExitFullscreen(); }
                 document.getElementById('fullscreenBtn').innerText = "VOLLBILD 🔲";
             }
         }
+        document.getElementById('fullscreenBtn').addEventListener('touchstart', (e) => { e.preventDefault(); toggleFullscreen(); }, { passive: false });
 
         // --- TFJS MoveNet Body Tracking Engine ---
         async function startCalibration() {
@@ -884,8 +889,8 @@
                     let nose = poses[0].keypoints[0];
                     if (nose && nose.score > 0.2) {
                         let currentLean = 'center';
-                        if (nose.x < baseNoseX1 - 15) currentLean = 'right';
-                        else if (nose.x > baseNoseX1 + 15) currentLean = 'left';
+                        if (nose.x < baseNoseX1 - 10) currentLean = 'right';
+                        else if (nose.x > baseNoseX1 + 10) currentLean = 'left';
 
                         if (typeof lastPhysicalLean1 === 'undefined') lastPhysicalLean1 = 'center';
                         if (currentLean !== lastPhysicalLean1) {
@@ -903,8 +908,8 @@
                     let nose = poses[1].keypoints[0];
                     if (nose && nose.score > 0.2) {
                         let currentLean = 'center';
-                        if (nose.x < baseNoseX2 - 15) currentLean = 'right';
-                        else if (nose.x > baseNoseX2 + 15) currentLean = 'left';
+                        if (nose.x < baseNoseX2 - 10) currentLean = 'right';
+                        else if (nose.x > baseNoseX2 + 10) currentLean = 'left';
 
                         if (typeof lastPhysicalLean2 === 'undefined') lastPhysicalLean2 = 'center';
                         if (currentLean !== lastPhysicalLean2) {
@@ -1323,7 +1328,7 @@
                         } else if (item.type !== 'hurdle' && item.type !== 'wide_hurdle' && Math.abs(r.x - item.x) < 80) {
                             if (item.type === 'box') {
                                 item.active = false;
-                                item.respawnTimer = 5.0;
+                                item.respawnTimer = 2.0;
 
                                 let rank = getRank(r);
                                 if (rank === 1) r.currentWeapon = 'banana';
