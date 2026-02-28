@@ -828,9 +828,16 @@
                     if ((isShootingLArr[0] || isShootingRArr[0]) && player.currentWeapon) player.shoot();
                     let nose = poses[0].keypoints[0];
                     if (nose && nose.score > 0.3) {
-                        if (nose.x < 144) laneIndex1 = 2;
-                        else if (nose.x > 176) laneIndex1 = 0;
-                        else laneIndex1 = 1;
+                        let currentLean = 'center';
+                        if (nose.x < 144) currentLean = 'right';
+                        else if (nose.x > 176) currentLean = 'left';
+
+                        if (typeof lastPhysicalLean1 === 'undefined') lastPhysicalLean1 = 'center';
+                        if (currentLean !== lastPhysicalLean1) {
+                            if (currentLean === 'left' && laneIndex1 > 0) laneIndex1--;
+                            else if (currentLean === 'right' && laneIndex1 < 2) laneIndex1++;
+                            lastPhysicalLean1 = currentLean;
+                        }
                         targetX1 = (laneIndex1 - 1) * 350;
                     }
                 }
@@ -840,9 +847,16 @@
                     if ((isShootingLArr[1] || isShootingRArr[1]) && player2.currentWeapon) player2.shoot();
                     let nose = poses[1].keypoints[0];
                     if (nose && nose.score > 0.3) {
-                        if (nose.x < 144) laneIndex2 = 2;
-                        else if (nose.x > 176) laneIndex2 = 0;
-                        else laneIndex2 = 1;
+                        let currentLean = 'center';
+                        if (nose.x < 144) currentLean = 'right';
+                        else if (nose.x > 176) currentLean = 'left';
+
+                        if (typeof lastPhysicalLean2 === 'undefined') lastPhysicalLean2 = 'center';
+                        if (currentLean !== lastPhysicalLean2) {
+                            if (currentLean === 'left' && laneIndex2 > 0) laneIndex2--;
+                            else if (currentLean === 'right' && laneIndex2 < 2) laneIndex2++;
+                            lastPhysicalLean2 = currentLean;
+                        }
                         targetX2 = (laneIndex2 - 1) * 350;
                     }
                 }
@@ -1203,6 +1217,7 @@
             }
 
             cameraZ = 0; targetX1 = 0; targetX2 = 0; projectiles = []; laneIndex1 = 1; laneIndex2 = 1; globalFlashAlpha = 0;
+            lastPhysicalLean1 = 'center'; lastPhysicalLean2 = 'center';
 
             player = new Racer(isTwoPlayer ? -200 : 0, '#ffffff', true, isTwoPlayer ? "P1" : "Du");
             player.cameraX = 0;
