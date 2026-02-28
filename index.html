@@ -9,9 +9,11 @@
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
 
-    <!-- KI Tracking Bibliotheken (MediaPipe) -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <!-- KI Tracking Bibliotheken (TensorFlow.js MoveNet) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
 
     <style>
         body,
@@ -122,6 +124,35 @@
             align-items: center;
             pointer-events: auto;
             z-index: 10;
+        }
+
+        #landscapePrompt {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 100;
+            color: white;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+        }
+
+        @media screen and (orientation: landscape) {
+            #landscapePrompt.active {
+                display: none !important;
+            }
+        }
+
+        @media screen and (orientation: portrait) {
+            #landscapePrompt.active {
+                display: flex !important;
+            }
         }
 
         h1 {
@@ -409,8 +440,23 @@
         </div>
     </div>
 
+    <!-- SPIELERAUSWAHL -->
+    <div id="playerSelectScreen" class="screen">
+        <h1>MODUS WÄHLEN</h1>
+        <div class="level-container">
+            <div class="level-card card-jungle" onclick="selectPlayerMode(1)">
+                <div class="level-title">1 SPIELER</div>
+                <div class="level-desc">Alleine Rennen</div>
+            </div>
+            <div class="level-card card-snow" onclick="selectPlayerMode(2)">
+                <div class="level-title">2 SPIELER</div>
+                <div class="level-desc">Split-Screen (Nur Kamera)</div>
+            </div>
+        </div>
+    </div>
+
     <!-- LEVEL AUSWAHL -->
-    <div id="startScreen" class="screen">
+    <div id="startScreen" class="screen" style="display:none;">
         <h1>LEVEL WÄHLEN</h1>
         <div class="level-container">
             <div class="level-card card-jungle" onclick="selectLevel(1)">
@@ -423,6 +469,11 @@
             </div>
         </div>
         <p>Wähle eine Strecke, um fortzufahren.</p>
+    </div>
+
+    <div id="landscapePrompt">
+        <h1>📱 BITTE GERÄT DREHEN</h1>
+        <p>Der 2-Spieler Modus erfordert Querformat (Landscape), damit beide Spieler genug Platz haben!</p>
     </div>
 
     <div id="controlScreen" class="screen">
@@ -464,19 +515,23 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
 
+        let fullWidth, fullHeight;
         let width, height;
         let isPlaying = false;
         let lastTime = 0;
         let raceStartTime = 0;
         let controlMode = 'touch';
-        let currentLevel = 1; // 1 = Dschungel, 2 = Schnee
+        let currentLevel = 1;
 
         let globalFlashAlpha = 0;
-        let menuGestureTimer = 0; // Timer for the "return to menu" gesture
+        let menuGestureTimer = 0;
+
+        let isTwoPlayer = false; // Neu für 2-Spieler Modus
+        let player2 = null;
 
         // Engine Parameter
         let cameraZ = 0; let cameraX = 0;
-        let currentCameraY = 350; // Wird dynamisch angepasst (für Abfahrt)
+        let currentCameraY = 350;
         const cameraHeight = 350; const focalLength = 320;
         const drawDistance = 45; const segmentLength = 120;
         const roadWidth = 1000;
@@ -484,12 +539,15 @@
 
         let player = null;
         let racers = [], items = [], projectiles = [], trees = [];
-        let targetX = 0; let touchX = 0, touchY = 0, touchStartTime = 0;
+        let targetX1 = 0; let targetX2 = 0; // targetX für Spieler 1 und 2
+        let touchX = 0, touchY = 0, touchStartTime = 0;
 
-        let laneIndex = 1;
-        let poseEngine = null;
+        let laneIndex1 = 1; let laneIndex2 = 1;
+        let detector = null; // TensorFlow.js Detector
         let cameraFeed = null;
         let calibrationMode = false;
+        let trackingActive = false; // Running the async detection loop
+        let currentPoses = [];
 
         const calibCanvas = document.getElementById('calibrationCanvas');
         const calibCtx = calibCanvas.getContext('2d');
@@ -535,8 +593,9 @@
         }
 
         function resize() {
-            width = window.innerWidth; height = window.innerHeight;
-            canvas.width = width; canvas.height = height;
+            fullWidth = window.innerWidth; fullHeight = window.innerHeight;
+            canvas.width = fullWidth; canvas.height = fullHeight;
+            width = fullWidth; height = fullHeight; // Standard (1 Player)
         }
         window.addEventListener('resize', resize); resize();
 
@@ -550,10 +609,21 @@
             return hill + slope;
         }
 
+        function selectPlayerMode(modeNum) {
+            isTwoPlayer = (modeNum === 2);
+            document.getElementById('playerSelectScreen').style.display = 'none';
+            document.getElementById('startScreen').style.display = 'flex';
+        }
+
         function selectLevel(lvl) {
             currentLevel = lvl;
             document.getElementById('startScreen').style.display = 'none';
-            document.getElementById('controlScreen').style.display = 'flex';
+            if (isTwoPlayer) {
+                // Skips control menu, goes straight to Camera
+                startCalibration();
+            } else {
+                document.getElementById('controlScreen').style.display = 'flex';
+            }
         }
 
         function showControls() {
@@ -561,93 +631,173 @@
             document.getElementById('controlScreen').style.display = 'flex';
         }
 
-        // --- MediaPipe Body Tracking Engine ---
-        function startCalibration() {
-            controlMode = 'camera'; // CRITICAL FIX: Ensure the game knows we are using the camera
+        // --- TFJS MoveNet Body Tracking Engine ---
+        async function startCalibration() {
+            controlMode = 'camera';
             document.getElementById('controlScreen').style.display = 'none';
+            document.getElementById('playerSelectScreen').style.display = 'none';
             document.getElementById('calibrationScreen').style.display = 'flex';
             cameraPip.style.display = 'block';
             cameraPip.className = "video-container pip-center";
 
-            if (poseEngine) {
+            if (detector) {
                 calibrationMode = true;
-                document.getElementById('calibText').innerHTML = "Stelle dich auf.<br><span class='highlight'>Hebe BEIDE HÄNDE um zu starten!</span>";
+                trackingActive = true;
+                requestAnimationFrame(trackLoop);
+                document.getElementById('calibText').innerHTML = "Stelle dich auf.<br><span class='highlight'>" + (isTwoPlayer ? "BEIDE Spieler: " : "") + "Hebe BEIDE HÄNDE um zu starten!</span>";
                 return;
             }
 
             const calibText = document.getElementById('calibText');
-            poseEngine = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-            poseEngine.setOptions({ modelComplexity: 0, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-            poseEngine.onResults(onPoseResults);
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
+                videoElement.srcObject = stream;
 
-            cameraFeed = new Camera(videoElement, {
-                onFrame: async () => { await poseEngine.send({ image: videoElement }); },
-                width: 320, height: 240
-            });
+                await new Promise((resolve) => {
+                    videoElement.onloadedmetadata = () => { resolve(videoElement); };
+                });
+                videoElement.play();
 
-            cameraFeed.start().then(() => {
+                calibText.innerHTML = "Video aktiv... Lade KI-Modell (TFJS)...";
+
+                const detectorConfig = {
+                    modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
+                    enableTracking: true,
+                    trackerType: poseDetection.TrackerType.BoundingBox
+                };
+                detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, detectorConfig);
+
                 calibrationMode = true;
-                calibText.innerHTML = "Stelle dich auf.<br><span class='highlight'>Hebe BEIDE HÄNDE um zu starten!</span>";
+                trackingActive = true;
+                calibText.innerHTML = "Stelle dich auf.<br><span class='highlight'>" + (isTwoPlayer ? "BEIDE Spieler: " : "") + "Hebe BEIDE HÄNDE um zu starten!</span>";
                 document.getElementById('forceStartBtn').style.display = 'block';
-            }).catch(e => {
+
+                requestAnimationFrame(trackLoop);
+            } catch (e) {
+                console.error(e);
                 calibText.innerHTML = "Kamera-Zugriff blockiert!<br>Bitte erlaube die Kamera in den Browser-Einstellungen.";
-            });
+            }
         }
 
         function forceCameraStart() { calibrationMode = false; initGame(controlMode); }
 
-        function drawSkeleton(lm, isShootingL, isShootingR) {
+        function drawPoses() {
             calibCtx.clearRect(0, 0, calibCanvas.width, calibCanvas.height);
-            calibCtx.strokeStyle = '#00ff00'; calibCtx.lineWidth = 4; calibCtx.fillStyle = '#ff0000';
+            calibCtx.lineWidth = 4;
 
-            const connections = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24]];
-            connections.forEach(pair => {
-                let p1 = lm[pair[0]], p2 = lm[pair[1]];
-                if (p1 && p2 && p1.visibility > 0.5 && p2.visibility > 0.5) {
-                    calibCtx.beginPath();
-                    calibCtx.moveTo(p1.x * calibCanvas.width, p1.y * calibCanvas.height);
-                    calibCtx.lineTo(p2.x * calibCanvas.width, p2.y * calibCanvas.height); calibCtx.stroke();
-                }
-            });
+            const connections = [[5, 6], [5, 7], [7, 9], [6, 8], [8, 10], [5, 11], [6, 12], [11, 12]];
 
-            [0, 11, 12, 13, 14, 15, 16, 23, 24].forEach(idx => {
-                let p = lm[idx];
-                if (p && p.visibility > 0.5) {
-                    if ((idx === 15 && isShootingL) || (idx === 16 && isShootingR)) {
-                        calibCtx.fillStyle = '#00ffff'; calibCtx.beginPath(); calibCtx.arc(p.x * calibCanvas.width, p.y * calibCanvas.height, 12, 0, Math.PI * 2); calibCtx.fill();
-                        calibCtx.fillStyle = '#ff0000';
-                    } else {
-                        calibCtx.beginPath(); calibCtx.arc(p.x * calibCanvas.width, p.y * calibCanvas.height, 6, 0, Math.PI * 2); calibCtx.fill();
+            currentPoses.forEach((pose, index) => {
+                let color = (index === 0) ? '#ff0000' : '#00ff00';
+                calibCtx.strokeStyle = color;
+                calibCtx.fillStyle = color;
+
+                connections.forEach(pair => {
+                    let p1 = pose.keypoints[pair[0]];
+                    let p2 = pose.keypoints[pair[1]];
+                    if (p1 && p2 && p1.score > 0.3 && p2.score > 0.3) {
+                        calibCtx.beginPath();
+                        calibCtx.moveTo(p1.x, p1.y);
+                        calibCtx.lineTo(p2.x, p2.y);
+                        calibCtx.stroke();
                     }
-                }
+                });
+
+                const pointsToDraw = [0, 5, 6, 7, 8, 9, 10, 11, 12];
+                pointsToDraw.forEach(idx => {
+                    let p = pose.keypoints[idx];
+                    if (p && p.score > 0.3) {
+                        calibCtx.beginPath(); calibCtx.arc(p.x, p.y, 6, 0, Math.PI * 2); calibCtx.fill();
+                    }
+                });
             });
         }
 
-        function onPoseResults(results) {
-            if (!results.poseLandmarks) return;
-            let lm = results.poseLandmarks;
+        async function trackLoop() {
+            if (!trackingActive) return;
 
-            let nose = lm[0];
-            let sL = lm[11], sR = lm[12], wL = lm[15], wR = lm[16];
+            if (detector && videoElement.readyState >= 2) {
+                try {
+                    const poses = await detector.estimatePoses(videoElement);
+                    currentPoses = poses.filter(p => p.score > 0.3).sort((a, b) => {
+                        let aX = a.keypoints[0].x;
+                        let bX = b.keypoints[0].x;
+                        return bX - aX;
+                    });
 
-            if (!sL || !sR || sL.visibility < 0.5 || sR.visibility < 0.5) return;
+                    if (!isTwoPlayer && currentPoses.length > 1) {
+                        currentPoses = [currentPoses.sort((a, b) => b.score - a.score)[0]];
+                    } else if (isTwoPlayer && currentPoses.length > 2) {
+                        currentPoses = currentPoses.slice(0, 2);
+                    }
 
-            let isJumping = (wL && wL.visibility > 0.5 && wL.y < sL.y - 0.05) &&
-                (wR && wR.visibility > 0.5 && wR.y < sR.y - 0.05);
+                    drawPoses();
+                    processPoses(currentPoses);
 
-            let isShootingL = false;
-            let isShootingR = false;
-            if (!isJumping) {
-                let dxL = wL ? Math.abs(wL.x - sL.x) : 0;
-                let dxR = wR ? Math.abs(wR.x - sR.x) : 0;
-
-                if (wL && wL.visibility > 0.5 && dxL > 0.15) isShootingL = true;
-                if (wR && wR.visibility > 0.5 && dxR > 0.15) isShootingR = true;
+                } catch (e) {
+                    console.error("TFJS Tracking Error:", e);
+                }
             }
 
-            drawSkeleton(lm, isShootingL, isShootingR);
+            requestAnimationFrame(trackLoop);
+        }
 
-            if (calibrationMode && isJumping) {
+        function processPoses(poses) {
+            if (poses.length === 0) return;
+
+            let anyJumping = false;
+            let bothJumping = true;
+            let isJumpingArr = [];
+            let isShootingLArr = [];
+            let isShootingRArr = [];
+            let isArmsOutstretchedArr = [];
+
+            poses.forEach((pose, index) => {
+                let kp = pose.keypoints;
+                let nose = kp[0];
+                let sL = kp[5], sR = kp[6], wL = kp[9], wR = kp[10];
+
+                if (!sL || !sR || sL.score < 0.3 || sR.score < 0.3) {
+                    isJumpingArr[index] = false; isShootingLArr[index] = false;
+                    isShootingRArr[index] = false; isArmsOutstretchedArr[index] = false;
+                    bothJumping = false;
+                    return;
+                }
+
+                let isJumping = (wL && wL.score > 0.3 && wL.y < sL.y - 15) &&
+                    (wR && wR.score > 0.3 && wR.y < sR.y - 15);
+
+                isJumpingArr[index] = isJumping;
+                if (isJumping) anyJumping = true;
+                else bothJumping = false;
+
+                let isShootingL = false;
+                let isShootingR = false;
+                if (!isJumping) {
+                    let dxL = wL ? Math.abs(wL.x - sL.x) : 0;
+                    let dxR = wR ? Math.abs(wR.x - sR.x) : 0;
+                    if (wL && wL.score > 0.3 && dxL > 45) isShootingL = true;
+                    if (wR && wR.score > 0.3 && dxR > 45) isShootingR = true;
+                }
+                isShootingLArr[index] = isShootingL;
+                isShootingRArr[index] = isShootingR;
+
+                let isArmsOut = false;
+                if (!isJumping) {
+                    if (wL && wR && sL && sR && wL.score > 0.3 && wR.score > 0.3) {
+                        let lDist = sL.x - wL.x;
+                        let rDist = wR.x - sR.x;
+                        if (lDist > 45 && rDist > 45 && Math.abs(wL.y - sL.y) < 40 && Math.abs(wR.y - sR.y) < 40) {
+                            isArmsOut = true;
+                        }
+                    }
+                }
+                isArmsOutstretchedArr[index] = isArmsOut;
+            });
+
+            if (isTwoPlayer && poses.length < 2) bothJumping = false;
+
+            if (calibrationMode && ((isTwoPlayer && bothJumping) || (!isTwoPlayer && anyJumping))) {
                 calibrationMode = false;
                 initGame(controlMode);
                 return;
@@ -655,54 +805,46 @@
 
             let isEndScreenVisible = document.getElementById('endScreen').style.display === 'flex';
 
-            // New "Return to Menu" gesture (T-Pose / Arms Outstretched)
-            let isArmsOutstretched = false;
-            if (isEndScreenVisible && !isJumping) {
-                if (wL && wR && sL && sR && wL.visibility > 0.5 && wR.visibility > 0.5) {
-                    // Check if wrists are horizontally far away from shoulders but vertically similar
-                    let lDist = sL.x - wL.x; // Right side of screen (mirrored)
-                    let rDist = wR.x - sR.x; // Left side of screen
-
-                    if (lDist > 0.15 && rDist > 0.15 && Math.abs(wL.y - sL.y) < 0.2 && Math.abs(wR.y - sR.y) < 0.2) {
-                        isArmsOutstretched = true;
-                    }
-                }
-            }
-
             if (isEndScreenVisible) {
-                if (isJumping) {
-                    initGame(controlMode); // Neustart
+                if ((isTwoPlayer && bothJumping) || (!isTwoPlayer && anyJumping)) {
+                    initGame(controlMode);
                     return;
                 }
 
-                if (isArmsOutstretched) {
+                if ((isTwoPlayer && isArmsOutstretchedArr[0] && isArmsOutstretchedArr[1]) || (!isTwoPlayer && isArmsOutstretchedArr[0])) {
                     if (menuGestureTimer === 0) menuGestureTimer = Date.now();
                     else if (Date.now() - menuGestureTimer > 1000) {
-                        // Gesture held for 1 second
                         location.reload();
                         return;
                     }
                 } else {
-                    menuGestureTimer = 0; // Reset timer if gesture is broken
+                    menuGestureTimer = 0;
                 }
             }
 
-            if (isPlaying && player && controlMode === 'camera') {
-                if (isJumping) player.jump();
-
-                if ((isShootingL || isShootingR) && player.currentWeapon) {
-                    player.shoot();
+            if (isPlaying && controlMode === 'camera') {
+                if (player && poses[0]) {
+                    if (isJumpingArr[0]) player.jump();
+                    if ((isShootingLArr[0] || isShootingRArr[0]) && player.currentWeapon) player.shoot();
+                    let nose = poses[0].keypoints[0];
+                    if (nose && nose.score > 0.3) {
+                        if (nose.x < 144) laneIndex1 = 2;
+                        else if (nose.x > 176) laneIndex1 = 0;
+                        else laneIndex1 = 1;
+                        targetX1 = (laneIndex1 - 1) * 350;
+                    }
                 }
 
-                if (nose && nose.visibility > 0.5) {
-                    let oldLane = laneIndex;
-                    if (nose.x < 0.45) laneIndex = 2; // Rechts
-                    else if (nose.x > 0.55) laneIndex = 0; // Links
-                    else laneIndex = 1; // Mitte
-
-                    // Fixed: player.targetX needs to actually influence player.x in update()
-                    // TargetX was only globally modifying touch controls before.
-                    targetX = (laneIndex - 1) * 350;
+                if (isTwoPlayer && player2 && poses[1]) {
+                    if (isJumpingArr[1]) player2.jump();
+                    if ((isShootingLArr[1] || isShootingRArr[1]) && player2.currentWeapon) player2.shoot();
+                    let nose = poses[1].keypoints[0];
+                    if (nose && nose.score > 0.3) {
+                        if (nose.x < 144) laneIndex2 = 2;
+                        else if (nose.x > 176) laneIndex2 = 0;
+                        else laneIndex2 = 1;
+                        targetX2 = (laneIndex2 - 1) * 350;
+                    }
                 }
             }
         }
@@ -715,9 +857,9 @@
         canvas.addEventListener('touchmove', (e) => {
             if (!isPlaying || !player || controlMode !== 'touch') return;
             e.preventDefault();
-            let currentX = e.touches[0].clientX; targetX += (currentX - touchX) * 4.0;
+            let currentX = e.touches[0].clientX; targetX1 += (currentX - touchX) * 4.0;
             let maxEdge = (roadWidth / 2) - 60;
-            if (targetX > maxEdge) targetX = maxEdge; if (targetX < -maxEdge) targetX = -maxEdge;
+            if (targetX1 > maxEdge) targetX1 = maxEdge; if (targetX1 < -maxEdge) targetX1 = -maxEdge;
             touchX = currentX;
         }, { passive: false });
         canvas.addEventListener('touchend', (e) => {
@@ -733,9 +875,9 @@
         });
         canvas.addEventListener('mousemove', (e) => {
             if (!isPlaying || !isMouseDown || !player || controlMode !== 'touch') return;
-            targetX += (e.clientX - touchX) * 4.0;
+            targetX1 += (e.clientX - touchX) * 4.0;
             let maxEdge = (roadWidth / 2) - 60;
-            if (targetX > maxEdge) targetX = maxEdge; if (targetX < -maxEdge) targetX = -maxEdge;
+            if (targetX1 > maxEdge) targetX1 = maxEdge; if (targetX1 < -maxEdge) targetX1 = -maxEdge;
             touchX = e.clientX;
         });
         canvas.addEventListener('mouseup', (e) => {
@@ -851,8 +993,11 @@
                         }
                     });
                 } else {
-                    // This handles BOTH touch and camera tracking targetX smoothing
-                    this.x += (targetX - this.x) * 8 * dt;
+                    if (this === player) {
+                        this.x += (targetX1 - this.x) * 8 * dt;
+                    } else if (isTwoPlayer && this === player2) {
+                        this.x += (targetX2 - this.x) * 8 * dt;
+                    }
                 }
                 this.lean = (this.x - oldX) * 0.1;
             }
@@ -951,7 +1096,7 @@
 
                 if (this.isPlayer) {
                     ctx.fillStyle = 'white'; ctx.font = 'bold ' + Math.max(14, 32 * p.scale) + 'px Arial';
-                    ctx.textAlign = 'center'; ctx.fillText('YOU', p.x, p.y - r - (35 * p.scale));
+                    ctx.textAlign = 'center'; ctx.fillText(this.name.toUpperCase(), p.x, p.y - r - (35 * p.scale));
                     ctx.beginPath(); ctx.moveTo(p.x - 6 * p.scale, p.y - r - 25 * p.scale); ctx.lineTo(p.x + 6 * p.scale, p.y - r - 25 * p.scale); ctx.lineTo(p.x, p.y - r - 15 * p.scale); ctx.fill();
                 }
             }
@@ -1057,15 +1202,25 @@
                 cameraPip.style.display = 'none';
             }
 
-            cameraZ = 0; targetX = 0; projectiles = []; laneIndex = 1; globalFlashAlpha = 0;
+            cameraZ = 0; targetX1 = 0; targetX2 = 0; projectiles = []; laneIndex1 = 1; laneIndex2 = 1; globalFlashAlpha = 0;
 
-            player = new Racer(0, '#ffffff', true, "Du");
-            racers = [
-                player,
-                new Racer(-350, '#ff3333', false, "Rot"),
-                new Racer(350, '#3333ff', false, "Blau"),
-                new Racer(0, '#ffff33', false, "Gelb")
-            ];
+            player = new Racer(isTwoPlayer ? -200 : 0, '#ffffff', true, isTwoPlayer ? "P1" : "Du");
+            player.cameraX = 0;
+            racers = [player];
+
+            if (isTwoPlayer) {
+                player2 = new Racer(200, '#bbffbb', true, "P2");
+                player2.cameraX = 0;
+                player2.z = 100;
+                racers.push(player2);
+                racers.push(new Racer(-350, '#ff3333', false, "Rot"));
+                racers.push(new Racer(350, '#3333ff', false, "Blau"));
+            } else {
+                player2 = null;
+                racers.push(new Racer(-350, '#ff3333', false, "Rot"));
+                racers.push(new Racer(350, '#3333ff', false, "Blau"));
+                racers.push(new Racer(0, '#ffff33', false, "Gelb"));
+            }
 
             createItems();
 
@@ -1101,7 +1256,7 @@
                                 else if (rank === racers.length) r.currentWeapon = 'lightning';
                                 else r.currentWeapon = 'rocket';
 
-                                if (r.isPlayer) {
+                                if (r === player) {
                                     weaponUI.style.display = 'block';
                                     if (r.currentWeapon === 'rocket') {
                                         throwBtn.innerText = '🚀'; throwBtn.style.background = 'radial-gradient(circle, #ff5555, #aa0000)';
@@ -1139,9 +1294,7 @@
             grad.addColorStop(0, t.skyTop); grad.addColorStop(1, t.skyBot);
             ctx.fillStyle = grad; ctx.fillRect(0, 0, width, height);
 
-            // Enhanced background celestial bodies
             if (currentLevel === 1) {
-                // Bright Sun for Jungle
                 let sunX = width * 0.8;
                 let sunY = height * 0.25;
                 let sunGrad = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, 150);
@@ -1151,7 +1304,6 @@
                 ctx.fillStyle = sunGrad;
                 ctx.beginPath(); ctx.arc(sunX, sunY, 150, 0, Math.PI * 2); ctx.fill();
 
-                // Detailed Clouds
                 ctx.fillStyle = 'rgba(255,255,255,0.7)';
                 let cloudOffset = (Date.now() * 0.015) % (width * 1.5) - (width * 0.25);
                 ctx.beginPath(); ctx.arc(cloudOffset + 100, height * 0.18, 50, 0, Math.PI * 2); ctx.fill();
@@ -1164,7 +1316,6 @@
                 ctx.beginPath(); ctx.arc(cloudOffset2 + width * 0.62, height * 0.26, 45, 0, Math.PI * 2); ctx.fill();
 
             } else {
-                // Glowy Moon for Snow
                 let moonX = width * 0.2;
                 let moonY = height * 0.2;
                 let moonGrad = ctx.createRadialGradient(moonX, moonY, 20, moonX, moonY, 120);
@@ -1174,16 +1325,14 @@
                 ctx.fillStyle = moonGrad;
                 ctx.beginPath(); ctx.arc(moonX, moonY, 120, 0, Math.PI * 2); ctx.fill();
 
-                // Enhanced Snowfall Arrays
                 ctx.fillStyle = 'rgba(255,255,255,0.9)';
                 for (let s = 0; s < 60; s++) {
                     let sx = (s * 153 + Date.now() * 0.02) % width;
-                    let sy = (s * 117 + Date.now() * 0.05) % height; // Snow falls all the way down
+                    let sy = (s * 117 + Date.now() * 0.05) % height;
                     ctx.beginPath(); ctx.arc(sx, sy, (s % 3) + 1.5, 0, Math.PI * 2); ctx.fill();
                 }
             }
 
-            // Mountain Range Gradient Enhancement
             let bgShift = (cameraX * 0.1) % (width * 2);
             let hillGrad = ctx.createLinearGradient(0, height / 2, 0, height);
             hillGrad.addColorStop(0, t.bgHill);
@@ -1217,127 +1366,169 @@
                 }
             });
 
-            cameraZ = player.z - 500;
-            let targetCameraX = getCurve(player.z) + player.x * 0.85;
-            cameraX += (targetCameraX - cameraX) * 5 * dt;
+            ctx.clearRect(0, 0, fullWidth, fullHeight);
 
-            // Kamera Höhe passt sich exakt der Abfahrt an
-            currentCameraY = getHillY(player.z) + cameraHeight;
+            let viewports = isTwoPlayer
+                ? [{ x: 0, w: fullWidth / 2, p: player, c: 'rgba(255,0,0,0.5)' }, { x: fullWidth / 2, w: fullWidth / 2, p: player2, c: 'rgba(0,255,0,0.5)' }]
+                : [{ x: 0, w: fullWidth, p: player, c: null }];
 
-            drawBackground();
+            viewports.forEach((vp) => {
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(vp.x, 0, vp.w, fullHeight);
+                ctx.clip();
+                ctx.translate(vp.x, 0);
 
-            let t = themes[currentLevel];
+                width = vp.w;
 
-            let startSegment = Math.floor(cameraZ / segmentLength);
-            for (let i = startSegment + drawDistance; i > startSegment; i--) {
-                let z1 = i * segmentLength; let z2 = (i + 1) * segmentLength;
-                let y1 = getHillY(z1); let y2 = getHillY(z2);
+                cameraZ = vp.p.z - 500;
+                let targetCameraX = getCurve(vp.p.z) + vp.p.x * 0.85;
+                if (typeof vp.p.cameraX === 'undefined') vp.p.cameraX = 0;
+                vp.p.cameraX += (targetCameraX - vp.p.cameraX) * 5 * dt;
+                cameraX = vp.p.cameraX;
 
-                let p1L = project(-roadWidth / 2, y1, z1); let p1R = project(roadWidth / 2, y1, z1);
-                let p2L = project(-roadWidth / 2, y2, z2); let p2R = project(roadWidth / 2, y2, z2);
-                let w1L = project(-roadWidth / 2, y1 + 180, z1); let w1R = project(roadWidth / 2, y1 + 180, z1);
-                let w2L = project(-roadWidth / 2, y2 + 180, z2); let w2R = project(roadWidth / 2, y2 + 180, z2);
-                let out1L = project(-roadWidth * 3, y1 + 130, z1); let out1R = project(roadWidth * 3, y1 + 130, z1);
-                let out2L = project(-roadWidth * 3, y2 + 130, z2); let out2R = project(roadWidth * 3, y2 + 130, z2);
+                currentCameraY = getHillY(vp.p.z) + cameraHeight;
 
-                if (p1L && p1R && p2L && p2R && w1L && w1R && w2L && w2R) {
-                    let isDark = (i % 2 === 0);
+                drawBackground();
 
-                    ctx.fillStyle = isDark ? t.outDark : t.outLight;
-                    if (out1L && out2L) {
-                        ctx.beginPath(); ctx.moveTo(out1L.x, out1L.y); ctx.lineTo(w1L.x, w1L.y); ctx.lineTo(w2L.x, w2L.y); ctx.lineTo(out2L.x, out2L.y); ctx.fill();
-                        ctx.beginPath(); ctx.moveTo(w1R.x, w1R.y); ctx.lineTo(out1R.x, out1R.y); ctx.lineTo(out2R.x, out2R.y); ctx.lineTo(w2R.x, w2R.y); ctx.fill();
-                    }
+                let t = themes[currentLevel];
 
-                    ctx.fillStyle = isDark ? t.wallDark : t.wallLight;
-                    ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(w1L.x, w1L.y); ctx.lineTo(w2L.x, w2L.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
-                    ctx.fillStyle = isDark ? t.wallTopDark : t.wallTopLight;
-                    ctx.beginPath(); ctx.moveTo(p1R.x, p1R.y); ctx.lineTo(w1R.x, w1R.y); ctx.lineTo(w2R.x, w2R.y); ctx.lineTo(p2R.x, p2R.y); ctx.fill();
+                let startSegment = Math.floor(cameraZ / segmentLength);
+                for (let i = startSegment + drawDistance; i > startSegment; i--) {
+                    let z1 = i * segmentLength; let z2 = (i + 1) * segmentLength;
+                    let y1 = getHillY(z1); let y2 = getHillY(z2);
 
-                    ctx.fillStyle = isDark ? t.roadDark : t.roadLight;
-                    ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(p1R.x, p1R.y); ctx.lineTo(p2R.x, p2R.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
+                    let p1L = project(-roadWidth / 2, y1, z1); let p1R = project(roadWidth / 2, y1, z1);
+                    let p2L = project(-roadWidth / 2, y2, z2); let p2R = project(roadWidth / 2, y2, z2);
+                    let w1L = project(-roadWidth / 2, y1 + 180, z1); let w1R = project(roadWidth / 2, y1 + 180, z1);
+                    let w2L = project(-roadWidth / 2, y2 + 180, z2); let w2R = project(roadWidth / 2, y2 + 180, z2);
+                    let out1L = project(-roadWidth * 3, y1 + 130, z1); let out1R = project(roadWidth * 3, y1 + 130, z1);
+                    let out2L = project(-roadWidth * 3, y2 + 130, z2); let out2R = project(roadWidth * 3, y2 + 130, z2);
 
-                    let p1M1 = project(-roadWidth / 6, y1, z1); let p1M2 = project(roadWidth / 6, y1, z1);
-                    let p2M1 = project(-roadWidth / 6, y2, z2); let p2M2 = project(roadWidth / 6, y2, z2);
+                    if (p1L && p1R && p2L && p2R && w1L && w1R && w2L && w2R) {
+                        let isDark = (i % 2 === 0);
 
-                    ctx.fillStyle = isDark ? t.roadMDark : t.roadMLight;
-                    ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(p1M1.x, p1M1.y); ctx.lineTo(p2M1.x, p2M1.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
-                    ctx.beginPath(); ctx.moveTo(p1M2.x, p1M2.y); ctx.lineTo(p1R.x, p1R.y); ctx.lineTo(p2R.x, p2R.y); ctx.lineTo(p2M2.x, p2M2.y); ctx.fill();
+                        ctx.fillStyle = isDark ? t.outDark : t.outLight;
+                        if (out1L && out2L) {
+                            ctx.beginPath(); ctx.moveTo(out1L.x, out1L.y); ctx.lineTo(w1L.x, w1L.y); ctx.lineTo(w2L.x, w2L.y); ctx.lineTo(out2L.x, out2L.y); ctx.fill();
+                            ctx.beginPath(); ctx.moveTo(w1R.x, w1R.y); ctx.lineTo(out1R.x, out1R.y); ctx.lineTo(out2R.x, out2R.y); ctx.lineTo(w2R.x, w2R.y); ctx.fill();
+                        }
 
-                    if (z1 <= finishLineZ && z2 > finishLineZ) {
-                        ctx.fillStyle = 'white'; ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(p1R.x, p1R.y); ctx.lineTo(p2R.x, p2R.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
-                        ctx.fillStyle = 'black'; ctx.beginPath(); ctx.moveTo(p1M1.x, p1M1.y); ctx.lineTo(p1M2.x, p1M2.y); ctx.lineTo(p2M2.x, p2M2.y); ctx.lineTo(p2M1.x, p2M1.y); ctx.fill();
+                        ctx.fillStyle = isDark ? t.wallDark : t.wallLight;
+                        ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(w1L.x, w1L.y); ctx.lineTo(w2L.x, w2L.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
+                        ctx.fillStyle = isDark ? t.wallTopDark : t.wallTopLight;
+                        ctx.beginPath(); ctx.moveTo(p1R.x, p1R.y); ctx.lineTo(w1R.x, w1R.y); ctx.lineTo(w2R.x, w2R.y); ctx.lineTo(p2R.x, p2R.y); ctx.fill();
+
+                        ctx.fillStyle = isDark ? t.roadDark : t.roadLight;
+                        ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(p1R.x, p1R.y); ctx.lineTo(p2R.x, p2R.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
+
+                        let p1M1 = project(-roadWidth / 6, y1, z1); let p1M2 = project(roadWidth / 6, y1, z1);
+                        let p2M1 = project(-roadWidth / 6, y2, z2); let p2M2 = project(roadWidth / 6, y2, z2);
+
+                        ctx.fillStyle = isDark ? t.roadMDark : t.roadMLight;
+                        ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(p1M1.x, p1M1.y); ctx.lineTo(p2M1.x, p2M1.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
+                        ctx.beginPath(); ctx.moveTo(p1M2.x, p1M2.y); ctx.lineTo(p1R.x, p1R.y); ctx.lineTo(p2R.x, p2R.y); ctx.lineTo(p2M2.x, p2M2.y); ctx.fill();
+
+                        if (z1 <= finishLineZ && z2 > finishLineZ) {
+                            ctx.fillStyle = 'white'; ctx.beginPath(); ctx.moveTo(p1L.x, p1L.y); ctx.lineTo(p1R.x, p1R.y); ctx.lineTo(p2R.x, p2R.y); ctx.lineTo(p2L.x, p2L.y); ctx.fill();
+                            ctx.fillStyle = 'black'; ctx.beginPath(); ctx.moveTo(p1M1.x, p1M1.y); ctx.lineTo(p1M2.x, p1M2.y); ctx.lineTo(p2M2.x, p2M2.y); ctx.lineTo(p2M1.x, p2M1.y); ctx.fill();
+                        }
                     }
                 }
-            }
 
-            let drawables = [];
-            let gateObj = new FinishGate(finishLineZ); drawables.push({ type: 'gate', obj: gateObj, z: finishLineZ });
-            racers.forEach(r => drawables.push({ type: 'racer', obj: r, z: r.z }));
-            projectiles.forEach(p => drawables.push({ type: 'proj', obj: p, z: p.z }));
-            trees.forEach(tr => { if (tr.z > cameraZ && tr.z < cameraZ + drawDistance * segmentLength) drawables.push({ type: 'tree', obj: tr, z: tr.z }) });
-            items.forEach(i => { if (i.active && i.type !== 'gate') drawables.push({ type: 'item', obj: i, z: i.z }); });
-            drawables.sort((a, b) => b.z - a.z);
+                let drawables = [];
+                let gateObj = new FinishGate(finishLineZ); drawables.push({ type: 'gate', obj: gateObj, z: finishLineZ });
+                racers.forEach(r => drawables.push({ type: 'racer', obj: r, z: r.z }));
+                projectiles.forEach(p => drawables.push({ type: 'proj', obj: p, z: p.z }));
+                trees.forEach(tr => { if (tr.z > cameraZ && tr.z < cameraZ + drawDistance * segmentLength) drawables.push({ type: 'tree', obj: tr, z: tr.z }) });
+                items.forEach(i => { if (i.active && i.type !== 'gate') drawables.push({ type: 'item', obj: i, z: i.z }); });
+                drawables.sort((a, b) => b.z - a.z);
 
-            drawables.forEach(d => {
-                if (d.type === 'racer' || d.type === 'proj' || d.type === 'gate' || d.type === 'tree') d.obj.draw();
-                if (d.type === 'item') {
-                    let item = d.obj; let hillY = getHillY(item.z);
+                drawables.forEach(d => {
+                    if (d.type === 'racer' || d.type === 'proj' || d.type === 'gate' || d.type === 'tree') d.obj.draw();
+                    if (d.type === 'item') {
+                        let item = d.obj; let hillY = getHillY(item.z);
 
-                    if (item.type === 'banana') {
-                        let p = project(item.x, hillY + 15, item.z);
-                        if (p) {
-                            ctx.font = 'bold ' + Math.max(10, 70 * p.scale) + 'px "Arial"';
-                            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🍌', p.x, p.y);
-                        }
-                    } else if (item.type === 'hurdle' || item.type === 'wide_hurdle') {
-                        let p1 = project(item.x - item.width / 2, hillY, item.z); let p2 = project(item.x + item.width / 2, hillY, item.z);
-                        let topP1 = project(item.x - item.width / 2, getHillY(item.z + 20) + 60, item.z + 20);
-                        let topP2 = project(item.x + item.width / 2, getHillY(item.z + 20) + 60, item.z + 20);
-                        if (p1 && p2 && topP1 && topP2) {
-                            let h = 60 * p1.scale;
-                            ctx.fillStyle = item.type === 'wide_hurdle' ? '#ee0000' : '#cc8800';
-                            if (currentLevel === 2 && item.type !== 'wide_hurdle') ctx.fillStyle = '#66b3ff'; // Eisige Hürden im Schnee
-                            ctx.fillRect(p1.x, p1.y - h, p2.x - p1.x, h);
+                        if (item.type === 'banana') {
+                            let p = project(item.x, hillY + 15, item.z);
+                            if (p) {
+                                ctx.font = 'bold ' + Math.max(10, 70 * p.scale) + 'px "Arial"';
+                                ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('🍌', p.x, p.y);
+                            }
+                        } else if (item.type === 'hurdle' || item.type === 'wide_hurdle') {
+                            let p1 = project(item.x - item.width / 2, hillY, item.z); let p2 = project(item.x + item.width / 2, hillY, item.z);
+                            let topP1 = project(item.x - item.width / 2, getHillY(item.z + 20) + 60, item.z + 20);
+                            let topP2 = project(item.x + item.width / 2, getHillY(item.z + 20) + 60, item.z + 20);
+                            if (p1 && p2 && topP1 && topP2) {
+                                let h = 60 * p1.scale;
+                                ctx.fillStyle = item.type === 'wide_hurdle' ? '#ee0000' : '#cc8800';
+                                if (currentLevel === 2 && item.type !== 'wide_hurdle') ctx.fillStyle = '#66b3ff';
+                                ctx.fillRect(p1.x, p1.y - h, p2.x - p1.x, h);
 
-                            ctx.fillStyle = '#222'; for (let s = p1.x; s < p2.x; s += 40 * p1.scale) ctx.fillRect(s, p1.y - h, 20 * p1.scale, h);
+                                ctx.fillStyle = '#222'; for (let s = p1.x; s < p2.x; s += 40 * p1.scale) ctx.fillRect(s, p1.y - h, 20 * p1.scale, h);
 
-                            ctx.fillStyle = item.type === 'wide_hurdle' ? '#ff3333' : '#ffaa00';
-                            if (currentLevel === 2 && item.type !== 'wide_hurdle') ctx.fillStyle = '#99ccff';
-                            ctx.beginPath(); ctx.moveTo(p1.x, p1.y - h); ctx.lineTo(p2.x, p2.y - h); ctx.lineTo(topP2.x, topP2.y); ctx.lineTo(topP1.x, topP1.y); ctx.fill();
-                        }
-                    } else if (item.type === 'box') {
-                        let hoverY = hillY + 40 + Math.sin(Date.now() * 0.005 + item.z) * 15; let p = project(item.x, hoverY, item.z);
-                        if (p) {
-                            let r = 40 * p.scale; ctx.fillStyle = 'rgba(0, 136, 255, 0.8)'; ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
-                            ctx.strokeStyle = '#fff'; ctx.lineWidth = 5 * p.scale; ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
-                            ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (45 * p.scale) + 'px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', p.x, p.y);
-                        }
-                    } else {
-                        let hoverY = item.type === 'text' ? hillY + 60 + Math.sin(Date.now() * 0.005 + item.z) * 10 : hillY + 15; let p = project(item.x, hoverY, item.z);
-                        if (p) {
-                            if (item.type === 'bomb') {
-                                let r = 30 * p.scale; ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
-                            } else {
-                                ctx.font = 'bold ' + Math.max(10, 85 * p.scale) + 'px "Arial Black"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                                ctx.lineWidth = 10 * p.scale; ctx.strokeStyle = '#000'; ctx.strokeText(item.text, p.x, p.y); ctx.fillStyle = item.color; ctx.fillText(item.text, p.x, p.y);
+                                ctx.fillStyle = item.type === 'wide_hurdle' ? '#ff3333' : '#ffaa00';
+                                if (currentLevel === 2 && item.type !== 'wide_hurdle') ctx.fillStyle = '#99ccff';
+                                ctx.beginPath(); ctx.moveTo(p1.x, p1.y - h); ctx.lineTo(p2.x, p2.y - h); ctx.lineTo(topP2.x, topP2.y); ctx.lineTo(topP1.x, topP1.y); ctx.fill();
+                            }
+                        } else if (item.type === 'box') {
+                            let hoverY = hillY + 40 + Math.sin(Date.now() * 0.005 + item.z) * 15; let p = project(item.x, hoverY, item.z);
+                            if (p) {
+                                let r = 40 * p.scale; ctx.fillStyle = 'rgba(0, 136, 255, 0.8)'; ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+                                ctx.strokeStyle = '#fff'; ctx.lineWidth = 5 * p.scale; ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
+                                ctx.fillStyle = '#fff'; ctx.font = 'bold ' + (45 * p.scale) + 'px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', p.x, p.y);
+                            }
+                        } else {
+                            let hoverY = item.type === 'text' ? hillY + 60 + Math.sin(Date.now() * 0.005 + item.z) * 10 : hillY + 15; let p = project(item.x, hoverY, item.z);
+                            if (p) {
+                                if (item.type === 'bomb') {
+                                    let r = 30 * p.scale; ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+                                } else {
+                                    ctx.font = 'bold ' + Math.max(10, 85 * p.scale) + 'px "Arial Black"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                                    ctx.lineWidth = 10 * p.scale; ctx.strokeStyle = '#000'; ctx.strokeText(item.text, p.x, p.y); ctx.fillStyle = item.color; ctx.fillText(item.text, p.x, p.y);
+                                }
                             }
                         }
                     }
+                });
+
+                if (globalFlashAlpha > 0) {
+                    ctx.fillStyle = `rgba(255, 255, 200, ${globalFlashAlpha})`;
+                    ctx.fillRect(0, 0, width, height);
                 }
+
+                if (isTwoPlayer) {
+                    // Split screen line
+                    ctx.strokeStyle = vp.c;
+                    ctx.lineWidth = 8;
+                    ctx.strokeRect(0, 0, width, height);
+                }
+
+                ctx.restore();
             });
 
+            width = fullWidth;
+
             if (globalFlashAlpha > 0) {
-                ctx.fillStyle = `rgba(255, 255, 200, ${globalFlashAlpha})`;
-                ctx.fillRect(0, 0, width, height);
                 globalFlashAlpha -= dt * 2;
             }
 
-            let rank = getRank(player);
-            rankDisplay.textContent = rank + (rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th");
-            rankDisplay.style.color = rank === 1 ? "#00ff00" : (rank === 4 ? "#ff3333" : "#ffcc00");
+            if (isTwoPlayer) {
+                rankDisplay.innerHTML = `<span style="color:#ff5555">P1: ${getRank(player)}</span> | <span style="color:#55ff55">P2: ${getRank(player2)}</span>`;
+            } else {
+                let rank = getRank(player);
+                rankDisplay.textContent = rank + (rank === 1 ? "st" : rank === 2 ? "nd" : rank === 3 ? "rd" : "th");
+                rankDisplay.style.color = rank === 1 ? "#00ff00" : (rank === 4 ? "#ff3333" : "#ffcc00");
+            }
 
-            if (player.z >= finishLineZ + 300) {
+            let finished = false;
+            if (isTwoPlayer) {
+                finished = (player.z >= finishLineZ + 300 && player2.z >= finishLineZ + 300);
+            } else {
+                finished = (player.z >= finishLineZ + 300);
+            }
+
+            if (finished) {
                 isPlaying = false; weaponUI.style.display = 'none'; rankDisplay.style.display = 'none';
 
                 if (controlMode === 'camera') {
@@ -1352,7 +1543,12 @@
                 racers.forEach(r => { if (r.finishTime === null) r.finishTime = currentTotalTime + ((finishLineZ - r.z) / Math.max(r.speed, 50)); });
 
                 let finalRanking = [...racers].sort((a, b) => a.finishTime - b.finishTime);
-                let playerFinalRank = finalRanking.findIndex(r => r.isPlayer) + 1;
+                let playerFinalRank = finalRanking.findIndex(r => r.isPlayer) + 1; // Used for UI banner
+                if (isTwoPlayer) {
+                    let p1Rank = finalRanking.findIndex(r => r === player) + 1;
+                    let p2Rank = finalRanking.findIndex(r => r === player2) + 1;
+                    playerFinalRank = Math.min(p1Rank, p2Rank);
+                }
 
                 let rt = document.getElementById('resultText');
                 rt.textContent = (playerFinalRank === 1) ? "1. PLATZ!" : "FAIL";
@@ -1373,11 +1569,11 @@
             }
 
             // --- Post-Processing (Vignette) ---
-            let vignette = ctx.createRadialGradient(width / 2, height / 2, height * 0.4, width / 2, height / 2, height);
+            let vignette = ctx.createRadialGradient(fullWidth / 2, fullHeight / 2, fullHeight * 0.4, fullWidth / 2, fullHeight / 2, fullHeight);
             vignette.addColorStop(0, 'rgba(0,0,0,0)');
             vignette.addColorStop(1, 'rgba(0,0,0,0.6)');
             ctx.fillStyle = vignette;
-            ctx.fillRect(0, 0, width, height);
+            ctx.fillRect(0, 0, fullWidth, fullHeight);
         }
     </script>
 </body>
