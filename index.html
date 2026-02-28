@@ -825,7 +825,8 @@
             if (isPlaying && controlMode === 'camera') {
                 if (player && poses[0]) {
                     if (isJumpingArr[0]) player.jump();
-                    if ((isShootingLArr[0] || isShootingRArr[0]) && player.currentWeapon) player.shoot();
+                    let canShoot0 = isTwoPlayer ? isShootingLArr[0] : (isShootingLArr[0] || isShootingRArr[0]);
+                    if (canShoot0 && player.currentWeapon) player.shoot();
                     let nose = poses[0].keypoints[0];
                     if (nose && nose.score > 0.3) {
                         let currentLean = 'center';
@@ -844,7 +845,7 @@
 
                 if (isTwoPlayer && player2 && poses[1]) {
                     if (isJumpingArr[1]) player2.jump();
-                    if ((isShootingLArr[1] || isShootingRArr[1]) && player2.currentWeapon) player2.shoot();
+                    if (isShootingRArr[1] && player2.currentWeapon) player2.shoot();
                     let nose = poses[1].keypoints[0];
                     if (nose && nose.score > 0.3) {
                         let currentLean = 'center';
